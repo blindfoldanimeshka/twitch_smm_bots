@@ -1,2 +1,2 @@
-# twich_smm_bots
+# twitch_smm_bots
 выкабениваться
