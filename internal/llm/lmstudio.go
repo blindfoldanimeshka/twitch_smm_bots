@@ -1,4 +1,4 @@
-// Package llm provides integration with LM Studio API (OpenAI-compatible)
+// Package llm provides integration with OpenAI-compatible APIs (LM Studio, Omniroute, OpenAI, etc.)
 package llm
 
 import (
@@ -8,25 +8,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// Client для LM Studio API
+// Client для OpenAI-compatible API (LM Studio, Omniroute, OpenAI, etc.)
 type Client struct {
-	baseURL string
+	baseURL    string
 	httpClient *http.Client
-	model   string
+	model      string
+	apiKey     string
+	provider   string
 }
 
-// NewClient создаёт клиент для LM Studio
-func NewClient(baseURL, model string) *Client {
+// NewClient создаёт клиент для OpenAI-compatible API
+// provider: "lmstudio", "omniroute", "openai", "custom"
+func NewClient(baseURL, model, apiKey, provider string) *Client {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:1234/v1"
 	}
+	if provider == "" {
+		provider = "lmstudio"
+	}
 	return &Client{
-		baseURL: baseURL,
+		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		model:   model,
+		model:      model,
+		apiKey:     apiKey,
+		provider:   provider,
 	}
 }
 
@@ -52,7 +61,7 @@ type chatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Generate отправляет запрос к LM Studio и возвращает сгенерированный текст
+// Generate отправляет запрос к API и возвращает сгенерированный текст
 func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	if maxTokens == 0 {
 		maxTokens = 60
@@ -82,6 +91,11 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, 
 
 	req.Header.Set("Content-Type", "application/json")
 
+	// Добавить API key если указан (для Omniroute, OpenAI и т.д.)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http error: %w", err)
@@ -94,7 +108,7 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("lm studio error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("%s API error (status %d): %s", c.provider, resp.StatusCode, string(body))
 	}
 
 	var chatResp chatResponse
@@ -113,15 +127,19 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, 
 	return chatResp.Choices[0].Message.Content, nil
 }
 
-// HealthCheck проверяет доступность LM Studio
+// HealthCheck проверяет доступность API
 func (c *Client) HealthCheck(ctx context.Context) error {
-	// LM Studio не имеет endpoint /health, пробуем /models или отправляем тестовый запрос
 	testResp, err := c.Generate(ctx, "You are a test bot", "Say 'ok' only", 5)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s health check failed: %w", c.provider, err)
 	}
-	if testResp == "" {
-		return fmt.Errorf("empty response from LM Studio")
+	if strings.TrimSpace(testResp) == "" {
+		return fmt.Errorf("empty response from %s", c.provider)
 	}
 	return nil
+}
+
+// GetProvider возвращает название провайдера
+func (c *Client) GetProvider() string {
+	return c.provider
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -132,6 +133,161 @@ func (s *Store) SetBotEnabled(ctx context.Context, botID string, enabled bool) e
 	}
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("bot not found: %s", botID)
+	}
+	return nil
+}
+
+func (s *Store) GetBot(ctx context.Context, botID string) (*BotConfig, error) {
+	var b BotConfig
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled
+		FROM bots WHERE id = $1`, botID).Scan(
+		&b.ID, &b.TwitchLogin, &b.OAuthToken, &b.Name, &b.Personality,
+		&b.MinDelaySec, &b.MaxDelaySec, &b.RateLimitPerMin, &b.Enabled,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get bot: %w", err)
+	}
+	return &b, nil
+}
+
+func (s *Store) CreateBot(ctx context.Context, cfg BotConfig) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO bots (id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		cfg.ID, cfg.TwitchLogin, cfg.OAuthToken, cfg.Name, cfg.Personality,
+		cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin, cfg.Enabled,
+	)
+	if err != nil {
+		return fmt.Errorf("create bot: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	query := "UPDATE bots SET "
+	args := make([]interface{}, 0, len(updates)+1)
+	i := 1
+
+	for key, val := range updates {
+		if i > 1 {
+			query += ", "
+		}
+		query += fmt.Sprintf("%s = $%d", key, i)
+		args = append(args, val)
+		i++
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d", i)
+	args = append(args, botID)
+
+	cmd, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update bot: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("bot not found: %s", botID)
+	}
+	return nil
+}
+
+func (s *Store) DeleteBot(ctx context.Context, botID string) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM bots WHERE id = $1`, botID)
+	if err != nil {
+		return fmt.Errorf("delete bot: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("bot not found: %s", botID)
+	}
+	return nil
+}
+
+type Proxy struct {
+	ID         string
+	Host       string
+	Port       int
+	Username   string
+	Password   string
+	Protocol   string
+	Enabled    bool
+	LastUsedAt *time.Time
+	FailCount  int
+	CreatedAt  time.Time
+}
+
+func (s *Store) ListProxies(ctx context.Context) ([]Proxy, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, host, port, COALESCE(username, ''), COALESCE(password, ''), protocol, enabled, last_used_at, fail_count, created_at
+		FROM proxies
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query proxies: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Proxy, 0)
+	for rows.Next() {
+		var p Proxy
+		if err := rows.Scan(&p.ID, &p.Host, &p.Port, &p.Username, &p.Password, &p.Protocol, &p.Enabled, &p.LastUsedAt, &p.FailCount, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan proxy: %w", err)
+		}
+		result = append(result, p)
+	}
+
+	return result, rows.Err()
+}
+
+func (s *Store) GetProxy(ctx context.Context, id string) (*Proxy, error) {
+	var p Proxy
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, host, port, COALESCE(username, ''), COALESCE(password, ''), protocol, enabled, last_used_at, fail_count, created_at
+		FROM proxies WHERE id = $1`, id).Scan(
+		&p.ID, &p.Host, &p.Port, &p.Username, &p.Password, &p.Protocol, &p.Enabled, &p.LastUsedAt, &p.FailCount, &p.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get proxy: %w", err)
+	}
+	return &p, nil
+}
+
+func (s *Store) CreateProxy(ctx context.Context, proxy Proxy) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO proxies (id, host, port, username, password, protocol, enabled, fail_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		proxy.ID, proxy.Host, proxy.Port, proxy.Username, proxy.Password, proxy.Protocol, proxy.Enabled, proxy.FailCount,
+	)
+	if err != nil {
+		return fmt.Errorf("create proxy: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateProxyFailCount(ctx context.Context, id string, failCount int) error {
+	_, err := s.pool.Exec(ctx, `UPDATE proxies SET fail_count = $2 WHERE id = $1`, id, failCount)
+	return err
+}
+
+func (s *Store) UpdateProxyLastUsed(ctx context.Context, id string, lastUsed time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE proxies SET last_used_at = $2 WHERE id = $1`, id, lastUsed)
+	return err
+}
+
+func (s *Store) SetProxyEnabled(ctx context.Context, id string, enabled bool) error {
+	_, err := s.pool.Exec(ctx, `UPDATE proxies SET enabled = $2 WHERE id = $1`, id, enabled)
+	return err
+}
+
+func (s *Store) DeleteProxy(ctx context.Context, id string) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM proxies WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete proxy: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("proxy not found: %s", id)
 	}
 	return nil
 }

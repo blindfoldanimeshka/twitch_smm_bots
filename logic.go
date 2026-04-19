@@ -8,11 +8,14 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"twitch-smm-bot/internal/api"
+	"twitch-smm-bot/internal/cache"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 	"twitch-smm-bot/internal/twitch"
@@ -43,20 +46,38 @@ var personalities = map[string]promptPair{
 }
 
 type globalLimiter struct {
-	mu     sync.Mutex
-	limit  int
-	events []time.Time
-	window time.Duration
+	mu          sync.Mutex
+	limit       int
+	window      time.Duration
+	cacheClient *cache.Client
+	events      []time.Time
 }
 
-func newGlobalLimiter(limit int) *globalLimiter {
+func newGlobalLimiter(limit int, cacheClient *cache.Client) *globalLimiter {
 	if limit <= 0 {
 		limit = 30
 	}
-	return &globalLimiter{limit: limit, window: time.Minute, events: make([]time.Time, 0, limit)}
+	return &globalLimiter{
+		limit:       limit,
+		window:      time.Minute,
+		cacheClient: cacheClient,
+		events:      make([]time.Time, 0, limit),
+	}
 }
 
 func (l *globalLimiter) allow(now time.Time) bool {
+	if l.cacheClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		count, err := l.cacheClient.IncrementRateLimit(ctx, cache.GlobalRateLimitKey, l.window)
+		if err != nil {
+			log.Printf("redis rate limit error (fallback to memory): %v", err)
+		} else {
+			return count <= int64(l.limit)
+		}
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -89,19 +110,26 @@ type botManager struct {
 	mu            sync.Mutex
 	store         *storage.Store
 	llmClient     *llm.Client
+	cacheClient   *cache.Client
 	channel       string
 	globalLimiter *globalLimiter
 	bots          map[string]*botRuntime
+	apiHub        *api.Hub
 }
 
-func newBotManager(store *storage.Store, llmClient *llm.Client, channel string, globalLimit int) *botManager {
+func newBotManager(store *storage.Store, llmClient *llm.Client, cacheClient *cache.Client, channel string, globalLimit int) *botManager {
 	return &botManager{
 		store:         store,
 		llmClient:     llmClient,
+		cacheClient:   cacheClient,
 		channel:       channel,
-		globalLimiter: newGlobalLimiter(globalLimit),
+		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
 		bots:          make(map[string]*botRuntime),
 	}
+}
+
+func (bm *botManager) setAPIHub(hub *api.Hub) {
+	bm.apiHub = hub
 }
 
 func (bm *botManager) loadBots(ctx context.Context) error {
@@ -144,6 +172,58 @@ func (bm *botManager) listIDs(enabledOnly bool) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (bm *botManager) ListBots() []api.BotInfo {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	infos := make([]api.BotInfo, 0, len(bm.bots))
+	for _, br := range bm.bots {
+		infos = append(infos, api.BotInfo{
+			Config:  br.cfg,
+			Running: br.running,
+		})
+	}
+	return infos
+}
+
+func (bm *botManager) GetBot(id string) (*api.BotInfo, error) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	br, ok := bm.bots[id]
+	if !ok {
+		return nil, fmt.Errorf("bot not found: %s", id)
+	}
+
+	return &api.BotInfo{
+		Config:  br.cfg,
+		Running: br.running,
+	}, nil
+}
+
+func (bm *botManager) StartBot(ctx context.Context, id string) error {
+	return bm.startBot(ctx, id, true)
+}
+
+func (bm *botManager) StopBot(id string) error {
+	return bm.stopBot(id, true)
+}
+
+func (bm *botManager) StartAll(ctx context.Context) error {
+	ids := bm.listIDs(false)
+	for _, id := range ids {
+		if err := bm.startBot(ctx, id, true); err != nil {
+			log.Printf("start %s: %v", id, err)
+		}
+	}
+	return nil
+}
+
+func (bm *botManager) StopAll() error {
+	bm.stopAll()
+	return nil
 }
 
 func (bm *botManager) startBot(parent context.Context, botID string, persist bool) error {
@@ -279,6 +359,16 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 
 		br.lastSent = now
 		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
+
+		if bm.cacheClient != nil {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = bm.cacheClient.AddMessage(cacheCtx, br.cfg.ID, msg, 5*time.Minute)
+			cancel()
+		}
+
+		if bm.apiHub != nil {
+			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality)
+		}
 	}
 }
 
@@ -395,24 +485,53 @@ func runConsole(ctx context.Context, bm *botManager) {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	llmURL := env("LMSTUDIO_URL", "http://127.0.0.1:1234/v1")
-	llmModel := env("LMSTUDIO_MODEL", "local-model")
+	// LLM Configuration
+	llmURL := env("LLM_API_URL", env("LMSTUDIO_URL", "http://127.0.0.1:1234/v1"))
+	llmModel := env("LLM_MODEL", env("LMSTUDIO_MODEL", "local-model"))
+	llmAPIKey := env("LLM_API_KEY", "")
+	llmProvider := env("LLM_PROVIDER", "lmstudio") // lmstudio, omniroute, openai, custom
+
+	// Database & Cache
 	databaseURL := env("DATABASE_URL", "postgres://botfarm:botfarm@localhost:5432/twitch_bot_farm?sslmode=disable")
+	redisURL := env("REDIS_URL", "redis://localhost:6379")
+
+	// Twitch & API
 	channel := env("TWITCH_CHANNEL", "")
+	apiKey := env("API_KEY", "")
+	apiPortStr := env("API_PORT", "8080")
+	corsOrigins := strings.Split(env("API_CORS_ORIGINS", "http://localhost:5173"), ",")
+	enableConsole := env("ENABLE_CONSOLE", "true") == "true"
 	globalLimit := 30
+
+	apiPort, err := strconv.Atoi(apiPortStr)
+	if err != nil {
+		apiPort = 8080
+	}
 
 	if strings.TrimSpace(channel) == "" {
 		log.Fatal("TWITCH_CHANNEL is required (example: test_channel)")
 	}
 
-	llmClient := llm.NewClient(llmURL, llmModel)
+	llmClient := llm.NewClient(llmURL, llmModel, llmAPIKey, llmProvider)
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	if err := llmClient.HealthCheck(healthCtx); err != nil {
 		healthCancel()
-		log.Fatalf("LM Studio is not reachable: %v", err)
+		log.Fatalf("LLM API (%s) is not reachable: %v", llmProvider, err)
 	}
 	healthCancel()
-	log.Printf("LM Studio OK (%s)", llmURL)
+	log.Printf("LLM API OK (provider: %s, url: %s, model: %s)", llmProvider, llmURL, llmModel)
+
+	var cacheClient *cache.Client
+	if redisURL != "" {
+		var err error
+		cacheClient, err = cache.NewClient(redisURL)
+		if err != nil {
+			log.Printf("Redis connection failed (fallback to in-memory): %v", err)
+		} else {
+			defer cacheClient.Close()
+			log.Printf("Redis OK (%s)", redisURL)
+		}
+	}
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignal()
@@ -427,7 +546,7 @@ func main() {
 		log.Fatalf("ensure schema error: %v", err)
 	}
 
-	manager := newBotManager(store, llmClient, channel, globalLimit)
+	manager := newBotManager(store, llmClient, cacheClient, channel, globalLimit)
 	if err := manager.loadBots(ctx); err != nil {
 		log.Fatalf("load bots error: %v", err)
 	}
@@ -436,7 +555,26 @@ func main() {
 		log.Printf("no bots found in database; add rows into table bots first")
 	}
 
+	apiServer := api.NewServer(manager, store, apiKey, apiPort, corsOrigins)
+	manager.setAPIHub(apiServer.Hub())
+
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			log.Printf("API server error: %v", err)
+		}
+	}()
+
 	manager.startEnabled(ctx)
-	runConsole(ctx, manager)
+
+	if enableConsole {
+		runConsole(ctx, manager)
+	} else {
+		<-ctx.Done()
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	apiServer.Shutdown(shutdownCtx)
+
 	manager.stopAll()
 }
