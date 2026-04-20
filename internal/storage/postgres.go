@@ -10,7 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const schemaSQL = `
+const (
+	dbOperationTimeout = 5 * time.Second
+
+	schemaSQL = `
 CREATE TABLE IF NOT EXISTS bots (
     id TEXT PRIMARY KEY,
     twitch_login TEXT NOT NULL,
@@ -40,6 +43,7 @@ CREATE TRIGGER bots_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 `
+)
 
 // BotConfig is a runtime-ready bot configuration loaded from PostgreSQL.
 type BotConfig struct {
@@ -91,6 +95,9 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 }
 
 func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled
 		FROM bots
@@ -127,6 +134,9 @@ func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
 }
 
 func (s *Store) SetBotEnabled(ctx context.Context, botID string, enabled bool) error {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
 	cmd, err := s.pool.Exec(ctx, `UPDATE bots SET enabled = $2 WHERE id = $1`, botID, enabled)
 	if err != nil {
 		return fmt.Errorf("update bot enabled: %w", err)
@@ -138,6 +148,9 @@ func (s *Store) SetBotEnabled(ctx context.Context, botID string, enabled bool) e
 }
 
 func (s *Store) GetBot(ctx context.Context, botID string) (*BotConfig, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
 	var b BotConfig
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled
@@ -152,6 +165,9 @@ func (s *Store) GetBot(ctx context.Context, botID string) (*BotConfig, error) {
 }
 
 func (s *Store) CreateBot(ctx context.Context, cfg BotConfig) error {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO bots (id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -168,6 +184,9 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 	if len(updates) == 0 {
 		return nil
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
 
 	query := "UPDATE bots SET "
 	args := make([]interface{}, 0, len(updates)+1)
@@ -196,6 +215,9 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 }
 
 func (s *Store) DeleteBot(ctx context.Context, botID string) error {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
 	cmd, err := s.pool.Exec(ctx, `DELETE FROM bots WHERE id = $1`, botID)
 	if err != nil {
 		return fmt.Errorf("delete bot: %w", err)

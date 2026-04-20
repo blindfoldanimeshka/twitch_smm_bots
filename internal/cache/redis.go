@@ -18,6 +18,14 @@ func NewClient(redisURL string) (*Client, error) {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
 
+	// Оптимальные настройки connection pool
+	opts.PoolSize = 10
+	opts.MinIdleConns = 5
+	opts.MaxRetries = 3
+	opts.DialTimeout = 5 * time.Second
+	opts.ReadTimeout = 3 * time.Second
+	opts.WriteTimeout = 3 * time.Second
+
 	rdb := redis.NewClient(opts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -43,7 +51,7 @@ func (c *Client) IncrementRateLimit(ctx context.Context, key string, window time
 	pipe.Expire(ctx, key, window)
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("increment rate limit %s: %w", key, err)
 	}
 
 	return incr.Val(), nil
@@ -54,7 +62,10 @@ func (c *Client) GetRateLimit(ctx context.Context, key string) (int64, error) {
 	if err == redis.Nil {
 		return 0, nil
 	}
-	return val, err
+	if err != nil {
+		return 0, fmt.Errorf("get rate limit %s: %w", key, err)
+	}
+	return val, nil
 }
 
 func (c *Client) SetBotStatus(ctx context.Context, botID string, status string, ttl time.Duration) error {
@@ -68,7 +79,10 @@ func (c *Client) GetBotStatus(ctx context.Context, botID string) (string, error)
 	if err == redis.Nil {
 		return "", nil
 	}
-	return val, err
+	if err != nil {
+		return "", fmt.Errorf("get bot status %s: %w", botID, err)
+	}
+	return val, nil
 }
 
 func (c *Client) AddMessage(ctx context.Context, botID string, message string, ttl time.Duration) error {
@@ -78,7 +92,10 @@ func (c *Client) AddMessage(ctx context.Context, botID string, message string, t
 	pipe.LTrim(ctx, key, 0, 49)
 	pipe.Expire(ctx, key, ttl)
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("add message for bot %s: %w", botID, err)
+	}
+	return nil
 }
 
 func (c *Client) GetMessages(ctx context.Context, botID string, limit int64) ([]string, error) {

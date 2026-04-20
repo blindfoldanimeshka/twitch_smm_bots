@@ -21,6 +21,21 @@ import (
 	"twitch-smm-bot/internal/twitch"
 )
 
+const (
+	// Bot error handling
+	maxConsecutiveErrors = 5
+	errorRetryDelay      = 5 * time.Second
+
+	// Cache timeouts
+	cacheOperationTimeout = 2 * time.Second
+	messageRetentionTime  = 5 * time.Minute
+
+	// LLM settings
+	llmTimeout      = 20 * time.Second
+	llmMaxTokens    = 60
+	llmRetryAttempts = 3
+)
+
 type promptPair struct {
 	system string
 	user   string
@@ -303,6 +318,8 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 	log.Printf("[%s] started", br.cfg.ID)
 	defer log.Printf("[%s] stopped", br.cfg.ID)
 
+	consecutiveErrors := 0
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -319,9 +336,31 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		case <-timer.C:
 		}
 
+		// Проверка и переподключение IRC если нужно
+		if !br.client.IsConnected() {
+			log.Printf("[%s] IRC disconnected, reconnecting...", br.cfg.ID)
+			if err := br.client.Reconnect(); err != nil {
+				log.Printf("[%s] reconnect failed: %v", br.cfg.ID, err)
+				consecutiveErrors++
+				if consecutiveErrors >= maxConsecutiveErrors {
+					log.Printf("[%s] too many errors, stopping bot", br.cfg.ID)
+					return
+				}
+				time.Sleep(errorRetryDelay)
+				continue
+			}
+			log.Printf("[%s] reconnected successfully", br.cfg.ID)
+			consecutiveErrors = 0
+		}
+
 		if err := br.client.Connect(); err != nil {
 			log.Printf("[%s] twitch connect error: %v", br.cfg.ID, err)
-			time.Sleep(5 * time.Second)
+			consecutiveErrors++
+			if consecutiveErrors >= maxConsecutiveErrors {
+				log.Printf("[%s] too many errors, stopping bot", br.cfg.ID)
+				return
+			}
+			time.Sleep(errorRetryDelay)
 			continue
 		}
 
@@ -348,21 +387,36 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		msg, err := bm.generateMessage(ctx, br.cfg.Personality)
 		if err != nil {
 			log.Printf("[%s] llm error: %v", br.cfg.ID, err)
+			consecutiveErrors++
+			if consecutiveErrors >= maxConsecutiveErrors {
+				log.Printf("[%s] too many LLM errors, stopping bot", br.cfg.ID)
+				return
+			}
 			continue
 		}
 
 		if err := br.client.SendMessage(msg); err != nil {
 			log.Printf("[%s] twitch send error: %v", br.cfg.ID, err)
 			br.client.Close()
+			consecutiveErrors++
+			if consecutiveErrors >= maxConsecutiveErrors {
+				log.Printf("[%s] too many send errors, stopping bot", br.cfg.ID)
+				return
+			}
 			continue
 		}
 
+		// Успешная отправка - сбрасываем счетчик ошибок
+		consecutiveErrors = 0
 		br.lastSent = now
 		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
 
 		if bm.cacheClient != nil {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = bm.cacheClient.AddMessage(cacheCtx, br.cfg.ID, msg, 5*time.Minute)
+			// Используем родительский контекст с таймаутом вместо Background
+			cacheCtx, cancel := context.WithTimeout(ctx, cacheOperationTimeout)
+			_ = bm.cacheClient.AddMessage(cacheCtx, br.cfg.ID, msg, messageRetentionTime)
+			_ = bm.cacheClient.AddBotMessageLog(cacheCtx, br.cfg.ID, msg, br.cfg.Personality)
+			_ = bm.cacheClient.IncrementBotStats(cacheCtx, br.cfg.ID)
 			cancel()
 		}
 
@@ -378,12 +432,12 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 		p = personalities["нейтрал"]
 	}
 
-	llmCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	llmCtx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
 
-	msg, err := bm.llmClient.Generate(llmCtx, p.system, p.user, 60)
+	msg, err := bm.llmClient.Generate(llmCtx, p.system, p.user, llmMaxTokens)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("generate message for %s: %w", personality, err)
 	}
 	return strings.TrimSpace(msg), nil
 }
@@ -483,8 +537,6 @@ func runConsole(ctx context.Context, bm *botManager) {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
-
 	// LLM Configuration
 	llmURL := env("LLM_API_URL", env("LMSTUDIO_URL", "http://127.0.0.1:1234/v1"))
 	llmModel := env("LLM_MODEL", env("LMSTUDIO_MODEL", "local-model"))

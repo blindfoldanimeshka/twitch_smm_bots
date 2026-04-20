@@ -2,8 +2,10 @@ package twitch
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -17,9 +19,13 @@ type IRCClient struct {
 	token   string
 	channel string
 
-	mu     sync.Mutex
-	conn   net.Conn
-	writer *bufio.Writer
+	mu          sync.Mutex
+	conn        net.Conn
+	writer      *bufio.Writer
+	connected   bool
+	reconnecting bool
+	lastPing    time.Time
+	cancel      context.CancelFunc
 }
 
 func NewIRCClient(login, token, channel string) *IRCClient {
@@ -40,7 +46,7 @@ func (c *IRCClient) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.conn != nil {
+	if c.conn != nil && c.connected {
 		return nil
 	}
 
@@ -51,6 +57,8 @@ func (c *IRCClient) Connect() error {
 
 	c.conn = conn
 	c.writer = bufio.NewWriter(conn)
+	c.connected = true
+	c.lastPing = time.Now()
 
 	if err := c.sendRawLocked("PASS " + c.token); err != nil {
 		c.closeLocked()
@@ -65,15 +73,42 @@ func (c *IRCClient) Connect() error {
 		return err
 	}
 
-	go c.readLoop(conn)
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = cancel
+	go c.readLoop(ctx, conn)
 	return nil
+}
+
+func (c *IRCClient) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connected
+}
+
+func (c *IRCClient) Reconnect() error {
+	c.mu.Lock()
+	if c.reconnecting {
+		c.mu.Unlock()
+		return fmt.Errorf("already reconnecting")
+	}
+	c.reconnecting = true
+	c.mu.Unlock()
+
+	c.Close()
+	time.Sleep(2 * time.Second)
+
+	c.mu.Lock()
+	c.reconnecting = false
+	c.mu.Unlock()
+
+	return c.Connect()
 }
 
 func (c *IRCClient) SendMessage(text string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.conn == nil {
+	if c.conn == nil || !c.connected {
 		return fmt.Errorf("irc connection is not established")
 	}
 
@@ -91,21 +126,36 @@ func (c *IRCClient) Close() {
 	c.closeLocked()
 }
 
-func (c *IRCClient) readLoop(conn net.Conn) {
+func (c *IRCClient) readLoop(ctx context.Context, conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if !scanner.Scan() {
+			break
+		}
+
 		line := scanner.Text()
 		if strings.HasPrefix(line, "PING ") {
 			payload := strings.TrimPrefix(line, "PING ")
 			_ = c.sendRaw("PONG " + payload)
+			c.mu.Lock()
+			c.lastPing = time.Now()
+			c.mu.Unlock()
 		}
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.conn == conn {
+		c.connected = false
 		c.closeLocked()
+		log.Printf("[IRC %s] Connection lost, will attempt reconnect on next message", c.login)
 	}
+	c.mu.Unlock()
 }
 
 func (c *IRCClient) sendRaw(line string) error {
@@ -129,9 +179,14 @@ func (c *IRCClient) sendRawLocked(line string) error {
 }
 
 func (c *IRCClient) closeLocked() {
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
 	if c.conn != nil {
 		_ = c.conn.Close()
 	}
 	c.conn = nil
 	c.writer = nil
+	c.connected = false
 }
