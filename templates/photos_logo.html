@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Фото и логотип — AutoVideo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Фото и логотип</h1>
+        <p>Пачка JPG, PNG или WebP из <code>input/raw_photos</code>. Рамка на превью задаёт положение и размер логотипа для всех отмеченных снимков.</p>
+        <div class="header__actions">
+            <a href="/" class="btn ghost">← На главную</a>
+            <a href="/memes" class="btn">Редактор мемов</a>
+        </div>
+    </header>
+
+    {% if error %}
+        <div class="alert alert--error">
+            {{ error }}
+        </div>
+    {% endif %}
+
+    <section class="card">
+        <h2>Исходники (input/raw_photos)</h2>
+        {% if not raw_photos %}
+            <p class="hint">Положи изображения (.jpg, .png, .webp) в <code>input/raw_photos</code>, обнови страницу. Логотип — <code>input/logo/logo.png</code> или загрузка ниже.</p>
+        {% else %}
+            <form method="post" action="/batch-photos-logo" enctype="multipart/form-data" data-show-processing>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="limit">Сколько файлов обработать</label>
+                        <input id="limit" name="limit" type="number" min="1" placeholder="Все выбранные">
+                        <p class="hint">Пусто — все отмеченные галочками.</p>
+                    </div>
+                    <div class="field">
+                        <label for="logo_opacity">Прозрачность логотипа (0–1)</label>
+                        <input id="logo_opacity" name="logo_opacity" type="number" min="0" max="1" step="0.05" value="1">
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="logo">Логотип (PNG с прозрачностью — лучше всего)</label>
+                    <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp">
+                    <p class="hint">
+                        {% if has_default_logo %}
+                            Можно не выбирать файл — будет использован сохранённый <code>user_logo.png</code> или <code>logo.png</code> в <code>input/logo</code>.
+                        {% else %}
+                            Загрузи логотип или положи файл <code>input/logo/logo.png</code>.
+                        {% endif %}
+                    </p>
+                </div>
+
+                <div class="field">
+                    <label>Позиция рамки на эталонном фото</label>
+                    <p class="hint">Перетащи рамку или потяни за правый нижний угол. Те же доли отступа применятся к каждому снимку.</p>
+                </div>
+
+                <div class="snip-container logo-snip-container">
+                    <img id="global-logo-preview" class="meme-video" src="/media/raw-photos/{{ raw_photos[0] | urlencode }}" alt="" decoding="async">
+                    <div id="global-logo-overlay" class="snip-overlay">
+                        <div id="global-logo-rect" class="logo-snip-rect" hidden></div>
+                    </div>
+                </div>
+
+                <input id="global_logo_x" name="logo_x" type="hidden" value="0.1">
+                <input id="global_logo_y" name="logo_y" type="hidden" value="0.1">
+                <input id="global_logo_w" name="logo_w" type="hidden" value="0.25">
+                <input id="global_logo_h" name="logo_h" type="hidden" value="0.12">
+
+                <div class="memes-grid">
+                    {% for name in raw_photos %}
+                        <div class="meme-card">
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="files" value="{{ name }}">
+                                <span>{{ name }}</span>
+                            </label>
+                            <img class="meme-video" src="/media/raw-photos/{{ name | urlencode }}" alt="" loading="lazy">
+                            <p class="hint"><a href="/photos-logo/{{ name | urlencode }}">Только это фото</a></p>
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn primary" type="submit">Наложить логотип на выбранные</button>
+                </div>
+            </form>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h2>Готово (output/photos_logo)</h2>
+        {% if not photos_logo_done %}
+            <p class="hint">Пока нет обработанных файлов.</p>
+        {% else %}
+            <div class="memes-grid">
+                {% for name in photos_logo_done %}
+                    <div class="meme-card">
+                        <div class="meme-name">{{ name }}</div>
+                        <img class="meme-video" src="/media/photos-logo/{{ name | urlencode }}" alt="" loading="lazy">
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    </section>
+</div>
+
+<div id="processing-overlay" class="processing-overlay" hidden>
+    <div class="processing-dialog">
+        <div class="spinner"></div>
+        <div class="processing-text">Накладываю логотип на фото…</div>
+        <div class="processing-hint">Не закрывай вкладку до окончания пакета.</div>
+    </div>
+</div>
+
+<script src="/static/photos_logo_snip.js"></script>
+<script src="/static/processing.js"></script>
+</body>
+</html>

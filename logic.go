@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"twitch-smm-bot/internal/api"
+	"twitch-smm-bot/internal/audio"
 	"twitch-smm-bot/internal/cache"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
@@ -122,22 +123,59 @@ type botRuntime struct {
 }
 
 type botManager struct {
-	mu            sync.Mutex
-	store         *storage.Store
-	llmClient     *llm.Client
-	cacheClient   *cache.Client
-	channel       string
-	globalLimiter *globalLimiter
-	bots          map[string]*botRuntime
-	apiHub        *api.Hub
+	mu              sync.Mutex
+	runtimeCtx      context.Context
+	store           *storage.Store
+	llmClient       *llm.Client
+	cacheClient     *cache.Client
+	channel         string
+	audioConfig     audio.Config
+	audioService    *audio.Service
+	audioCancel     context.CancelFunc
+	globalLimiter   *globalLimiter
+	bots            map[string]*botRuntime
+	apiHub          *api.Hub
+	rotationEnabled bool
+	rotationCancel  context.CancelFunc
 }
 
-func newBotManager(store *storage.Store, llmClient *llm.Client, cacheClient *cache.Client, channel string, globalLimit int) *botManager {
+func normalizeChannelName(raw string) string {
+	ch := strings.TrimSpace(raw)
+	ch = strings.TrimPrefix(ch, "#")
+	return strings.ToLower(ch)
+}
+
+func primaryChannelFromSettings(settings *storage.Settings, fallback string) string {
+	if settings != nil {
+		for _, candidate := range settings.Channels {
+			ch := normalizeChannelName(candidate)
+			if ch != "" {
+				return ch
+			}
+		}
+	}
+	return normalizeChannelName(fallback)
+}
+
+func newBotManager(
+	store *storage.Store,
+	llmClient *llm.Client,
+	cacheClient *cache.Client,
+	runtimeCtx context.Context,
+	channel string,
+	globalLimit int,
+	audioCfg audio.Config,
+) *botManager {
+	if runtimeCtx == nil {
+		runtimeCtx = context.Background()
+	}
 	return &botManager{
+		runtimeCtx:    runtimeCtx,
 		store:         store,
 		llmClient:     llmClient,
 		cacheClient:   cacheClient,
 		channel:       channel,
+		audioConfig:   audioCfg,
 		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
 		bots:          make(map[string]*botRuntime),
 	}
@@ -158,9 +196,14 @@ func (bm *botManager) loadBots(ctx context.Context) error {
 
 	bm.bots = make(map[string]*botRuntime, len(cfgs))
 	for _, cfg := range cfgs {
+		// Используем current_channel если задан, иначе дефолтный канал
+		channel := normalizeChannelName(cfg.CurrentChannel)
+		if channel == "" {
+			channel = normalizeChannelName(bm.channel)
+		}
 		bm.bots[cfg.ID] = &botRuntime{
 			cfg:    cfg,
-			client: twitch.NewIRCClient(cfg.TwitchLogin, cfg.OAuthToken, bm.channel),
+			client: twitch.NewIRCClient(cfg.TwitchLogin, cfg.Password, channel),
 		}
 	}
 	return nil
@@ -252,6 +295,18 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		bm.mu.Unlock()
 		return nil
 	}
+
+	targetChannel := normalizeChannelName(br.cfg.CurrentChannel)
+	if targetChannel == "" {
+		targetChannel = normalizeChannelName(bm.channel)
+	}
+	if targetChannel == "" {
+		bm.mu.Unlock()
+		return fmt.Errorf("no twitch channel configured: set Settings -> channels in UI")
+	}
+
+	// Пересоздаем клиент на актуальный канал перед запуском.
+	br.client = twitch.NewIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
 
 	ctx, cancel := context.WithCancel(parent)
 	br.cancel = cancel
@@ -432,10 +487,24 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 		p = personalities["нейтрал"]
 	}
 
+	userPrompt := p.user
+	bm.mu.Lock()
+	audioService := bm.audioService
+	bm.mu.Unlock()
+
+	if audioService != nil {
+		streamContext := strings.TrimSpace(audioService.GetRecentContext())
+		if streamContext != "" {
+			userPrompt = p.user + "\n\nКонтекст из недавней транскрипции стрима (может быть неточным):\n" +
+				streamContext +
+				"\n\nИспользуй это как подсказку по теме и напиши короткое сообщение."
+		}
+	}
+
 	llmCtx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
 
-	msg, err := bm.llmClient.Generate(llmCtx, p.system, p.user, llmMaxTokens)
+	msg, err := bm.llmClient.Generate(llmCtx, p.system, userPrompt, llmMaxTokens)
 	if err != nil {
 		return "", fmt.Errorf("generate message for %s: %w", personality, err)
 	}
@@ -456,6 +525,191 @@ func randomDelay(minSec, maxSec int) time.Duration {
 	return time.Duration(minSec+rand.Intn(span)) * time.Second
 }
 
+// startRotation запускает горутину для периодической ротации ботов между каналами
+func (bm *botManager) startRotation(ctx context.Context, channels []string, intervalMinutes int) {
+	if len(channels) < 2 || intervalMinutes <= 0 {
+		log.Printf("Rotation disabled: need at least 2 channels and positive interval")
+		return
+	}
+
+	rotationCtx, cancel := context.WithCancel(ctx)
+	bm.mu.Lock()
+	bm.rotationEnabled = true
+	bm.rotationCancel = cancel
+	bm.mu.Unlock()
+
+	log.Printf("Starting bot rotation: %d channels, interval %d minutes", len(channels), intervalMinutes)
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-rotationCtx.Done():
+				log.Printf("Bot rotation stopped")
+				return
+			case <-ticker.C:
+				bm.rotateBots(ctx, channels)
+			}
+		}
+	}()
+}
+
+// stopRotation останавливает ротацию ботов
+func (bm *botManager) stopRotation() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	if bm.rotationCancel != nil {
+		bm.rotationCancel()
+		bm.rotationCancel = nil
+	}
+	bm.rotationEnabled = false
+}
+
+func (bm *botManager) startAudio(ctx context.Context) error {
+	bm.mu.Lock()
+	if bm.audioService != nil {
+		bm.mu.Unlock()
+		return nil
+	}
+	cfg := bm.audioConfig
+	bm.mu.Unlock()
+
+	service := audio.NewService(cfg)
+	audioCtx, cancel := context.WithCancel(ctx)
+	if err := service.Start(audioCtx); err != nil {
+		cancel()
+		return err
+	}
+
+	bm.mu.Lock()
+	bm.audioService = service
+	bm.audioCancel = cancel
+	bm.mu.Unlock()
+
+	log.Printf("Audio context service enabled (channel: %s)", cfg.Channel)
+	return nil
+}
+
+func (bm *botManager) stopAudio() {
+	bm.mu.Lock()
+	enabled := bm.audioService != nil
+	if bm.audioCancel != nil {
+		bm.audioCancel()
+		bm.audioCancel = nil
+	}
+	bm.audioService = nil
+	bm.mu.Unlock()
+
+	if enabled {
+		log.Printf("Audio context service disabled")
+	}
+}
+
+func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Settings) error {
+	if settings == nil {
+		return nil
+	}
+
+	baseCtx := bm.runtimeCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+
+	primaryChannel := primaryChannelFromSettings(settings, bm.channel)
+	primaryChanged := false
+
+	bm.mu.Lock()
+	if primaryChannel != "" && primaryChannel != bm.channel {
+		bm.channel = primaryChannel
+		primaryChanged = true
+	}
+	if primaryChannel != "" {
+		bm.audioConfig.Channel = primaryChannel
+	}
+	audioWasRunning := bm.audioService != nil
+	bm.mu.Unlock()
+
+	if primaryChanged {
+		log.Printf("Primary Twitch channel set from UI settings: %s", primaryChannel)
+	}
+
+	if settings.RotationEnabled && len(settings.Channels) > 1 {
+		bm.stopRotation()
+		bm.startRotation(baseCtx, settings.Channels, settings.RotationInterval)
+	} else {
+		bm.stopRotation()
+	}
+
+	if settings.AudioEnabled {
+		if primaryChanged && audioWasRunning {
+			bm.stopAudio()
+		}
+		if err := bm.startAudio(baseCtx); err != nil {
+			return fmt.Errorf("start audio service: %w", err)
+		}
+	} else {
+		bm.stopAudio()
+	}
+
+	return nil
+}
+
+// rotateBots переключает ботов на случайные каналы
+func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
+	if len(channels) < 2 {
+		return
+	}
+
+	bm.mu.Lock()
+	runningBots := make([]*botRuntime, 0)
+	for _, br := range bm.bots {
+		if br.running {
+			runningBots = append(runningBots, br)
+		}
+	}
+	bm.mu.Unlock()
+
+	if len(runningBots) == 0 {
+		return
+	}
+
+	log.Printf("Rotating %d bots across %d channels", len(runningBots), len(channels))
+
+	for _, br := range runningBots {
+		// Выбираем случайный канал
+		newChannel := channels[rand.Intn(len(channels))]
+
+		// Останавливаем бота
+		if err := bm.stopBot(br.cfg.ID, false); err != nil {
+			log.Printf("Failed to stop bot %s for rotation: %v", br.cfg.ID, err)
+			continue
+		}
+
+		// Обновляем канал в БД
+		if err := bm.store.UpdateBotChannel(ctx, br.cfg.ID, newChannel); err != nil {
+			log.Printf("Failed to update channel for bot %s: %v", br.cfg.ID, err)
+			continue
+		}
+
+		// Обновляем конфигурацию и создаем новый IRC клиент
+		bm.mu.Lock()
+		br.cfg.CurrentChannel = newChannel
+		br.client = twitch.NewIRCClient(br.cfg.TwitchLogin, br.cfg.Password, newChannel)
+		bm.mu.Unlock()
+
+		// Запускаем бота на новом канале
+		if err := bm.startBot(ctx, br.cfg.ID, false); err != nil {
+			log.Printf("Failed to restart bot %s on channel %s: %v", br.cfg.ID, newChannel, err)
+			continue
+		}
+
+		log.Printf("Bot %s rotated to channel %s", br.cfg.ID, newChannel)
+	}
+}
+
 func minInterval(ratePerMin int) time.Duration {
 	if ratePerMin <= 0 {
 		ratePerMin = 10
@@ -469,6 +723,18 @@ func env(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func envInt(key string, fallback int) int {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func runConsole(ctx context.Context, bm *botManager) {
@@ -548,20 +814,33 @@ func main() {
 	redisURL := env("REDIS_URL", "redis://localhost:6379")
 
 	// Twitch & API
-	channel := env("TWITCH_CHANNEL", "")
+	channel := normalizeChannelName(env("TWITCH_CHANNEL", ""))
 	apiKey := env("API_KEY", "")
 	apiPortStr := env("API_PORT", "8080")
 	corsOrigins := strings.Split(env("API_CORS_ORIGINS", "http://localhost:5173"), ",")
 	enableConsole := env("ENABLE_CONSOLE", "true") == "true"
 	globalLimit := 30
 
+	// Local audio transcription (OpenAI-compatible STT endpoint)
+	audioCfg := audio.Config{
+		Channel:          channel,
+		SourceURL:        env("AUDIO_SOURCE_URL", ""),
+		Quality:          env("AUDIO_STREAM_QUALITY", "best"),
+		ChunkSeconds:     envInt("AUDIO_CHUNK_SEC", 8),
+		PollSeconds:      envInt("AUDIO_POLL_SEC", 15),
+		ContextTTL:       time.Duration(envInt("AUDIO_CONTEXT_TTL_SEC", 120)) * time.Second,
+		ContextMaxChars:  envInt("AUDIO_CONTEXT_MAX_CHARS", 320),
+		STTURL:           env("AUDIO_STT_URL", "http://127.0.0.1:9000/v1/audio/transcriptions"),
+		STTModel:         env("AUDIO_STT_MODEL", "whisper-1"),
+		STTAPIKey:        env("AUDIO_STT_API_KEY", ""),
+		STTLanguage:      env("AUDIO_STT_LANGUAGE", "ru"),
+		StreamlinkBinary: env("AUDIO_STREAMLINK_CMD", "streamlink"),
+		FFMPEGBinary:     env("AUDIO_FFMPEG_CMD", "ffmpeg"),
+	}
+
 	apiPort, err := strconv.Atoi(apiPortStr)
 	if err != nil {
 		apiPort = 8080
-	}
-
-	if strings.TrimSpace(channel) == "" {
-		log.Fatal("TWITCH_CHANNEL is required (example: test_channel)")
 	}
 
 	llmClient := llm.NewClient(llmURL, llmModel, llmAPIKey, llmProvider)
@@ -598,7 +877,22 @@ func main() {
 		log.Fatalf("ensure schema error: %v", err)
 	}
 
-	manager := newBotManager(store, llmClient, cacheClient, channel, globalLimit)
+	if err := store.EnsureSettingsTable(ctx); err != nil {
+		log.Fatalf("ensure settings table error: %v", err)
+	}
+
+	settings, err := store.GetSettings(ctx)
+	if err != nil {
+		log.Printf("Failed to load settings: %v", err)
+	}
+
+	channel = primaryChannelFromSettings(settings, channel)
+	audioCfg.Channel = channel
+	if channel == "" {
+		log.Printf("No default channel configured yet. Set Settings -> channels in UI before starting bots.")
+	}
+
+	manager := newBotManager(store, llmClient, cacheClient, ctx, channel, globalLimit, audioCfg)
 	if err := manager.loadBots(ctx); err != nil {
 		log.Fatalf("load bots error: %v", err)
 	}
@@ -616,6 +910,11 @@ func main() {
 		}
 	}()
 
+	// Загружаем настройки и применяем runtime-флаги (ротация, аудио-контекст)
+	if err := manager.ApplySettings(ctx, settings); err != nil {
+		log.Printf("Failed to apply settings: %v", err)
+	}
+
 	manager.startEnabled(ctx)
 
 	if enableConsole {
@@ -623,6 +922,9 @@ func main() {
 	} else {
 		<-ctx.Done()
 	}
+
+	manager.stopRotation()
+	manager.stopAudio()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

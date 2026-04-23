@@ -51,6 +51,8 @@ func NewServer(manager BotManager, store *storage.Store, apiKey string, port int
 	api.HandleFunc("/proxies", handler.ListProxies).Methods("GET")
 	api.HandleFunc("/proxies", handler.CreateProxy).Methods("POST")
 	api.HandleFunc("/proxies/{id}", handler.DeleteProxy).Methods("DELETE")
+	api.HandleFunc("/settings", handler.GetSettings).Methods("GET")
+	api.HandleFunc("/settings", handler.UpdateSettings).Methods("POST")
 	api.HandleFunc("/ws", hub.ServeWS).Methods("GET")
 
 	c := cors.New(cors.Options{

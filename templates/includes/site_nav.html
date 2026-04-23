@@ -1,0 +1,23 @@
+{# Ожидается request в контексте шаблона #}
+<header class="site-shell">
+    <nav class="site-nav" aria-label="Разделы приложения">
+        <a href="/" class="site-nav__brand">
+            <span class="site-nav__mark" aria-hidden="true"></span>
+            <span class="site-nav__wordmark">AutoVideo</span>
+        </a>
+        <ul class="site-nav__list">
+            <li>
+                <a href="/" class="site-nav__link{% if request.url.path == '/' %} is-active{% endif %}">Сборка</a>
+            </li>
+            <li>
+                <a href="/memes" class="site-nav__link{% if request.url.path.startswith('/memes') %} is-active{% endif %}">Мемы</a>
+            </li>
+            <li>
+                <a href="/photos-logo" class="site-nav__link site-nav__link--featured{% if request.url.path.startswith('/photos-logo') %} is-active{% endif %}">Фото и лого</a>
+            </li>
+            <li>
+                <a href="/instagram" class="site-nav__link{% if request.url.path.startswith('/instagram') %} is-active{% endif %}">Instagram</a>
+            </li>
+        </ul>
+    </nav>
+</header>

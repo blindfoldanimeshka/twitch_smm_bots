@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>AutoVideo — сборка шортов</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="hero">
+        <h1 class="hero__title">Автоферма коротких роликов</h1>
+        <p class="hero__lead">Мем-кружок, паркур и СДВГ-вставка собираются в вертикальный шорт. Ниже — быстрые переходы во все разделы.</p>
+    </header>
+
+    <nav class="quick-tiles" aria-label="Быстрые разделы">
+        <a class="quick-tile" href="#build">
+            <span class="quick-tile__label">Шаг 1</span>
+            <span class="quick-tile__title">Сборка роликов</span>
+            <p class="quick-tile__desc">Параметры мема, фона и вставки — форма на этой странице.</p>
+        </a>
+        <a class="quick-tile" href="/memes">
+            <span class="quick-tile__label">Видео</span>
+            <span class="quick-tile__title">Редактор мемов</span>
+            <p class="quick-tile__desc">Пакетная обрезка сырья из <code>raw_memes</code> под кружок.</p>
+        </a>
+        <a class="quick-tile quick-tile--primary" href="/photos-logo">
+            <span class="quick-tile__label">Изображения</span>
+            <span class="quick-tile__title">Фото и логотип</span>
+            <p class="quick-tile__desc">Наложение логотипа на пачку фото — отдельный экран с превью рамки.</p>
+        </a>
+        <a class="quick-tile" href="/instagram">
+            <span class="quick-tile__label">Публикация</span>
+            <span class="quick-tile__title">Instagram</span>
+            <p class="quick-tile__desc">Заливка готовых Reels из <code>output</code>.</p>
+        </a>
+    </nav>
+
+    {% if message %}
+        <div class="alert">
+            {{ message }}
+        </div>
+    {% endif %}
+
+    <section class="card" id="build">
+        <h2>Сборка роликов</h2>
+        <p class="hint hint--tight">Укажи мем, фон и при необходимости СДВГ — результат появится в <code>output</code>.</p>
+        <form method="post" action="/render">
+            <div class="field-grid">
+                <div class="field">
+                    <label for="count">Сколько шортсов собрать</label>
+                    <input id="count" name="count" type="number" min="1" max="100" value="1">
+                    <p class="hint">При рандоме мем и фон не повторяются; СДВГ может повторяться.</p>
+                </div>
+
+                <div class="field">
+                    <label for="meme">Мем-кружок</label>
+                    <select id="meme" name="meme">
+                        <option value="">Рандом</option>
+                        {% for m in memes %}
+                            <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="hint">Файлы из `input/memes`</p>
+                </div>
+
+                <div class="field">
+                    <label for="background">Фон-паркур</label>
+                    <select id="background" name="background">
+                        <option value="">Рандом</option>
+                        {% for b in backgrounds %}
+                            <option value="{{ b }}">{{ b }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="hint">Файлы из `input/backgrounds`</p>
+                </div>
+
+                <div class="field">
+                    <label for="meme_diameter">Размер мем-кружка на финальном видео (px)</label>
+                    <input id="meme_diameter" name="meme_diameter" type="number" min="200" max="1000" value="700">
+                    <p class="hint">Диаметр кружка в кадре 1080×1920. Чем больше — тем крупнее мем.</p>
+                </div>
+
+                <div class="field">
+                    <label for="diameter_random">В батче: случайный размер</label>
+                    <label class="checkbox-row">
+                        <input id="diameter_random" name="diameter_random" type="checkbox" value="1">
+                        <span>Случайный диаметр для каждого ролика (между мин и макс)</span>
+                    </label>
+                </div>
+                <div class="field" id="wrap_diameter_min">
+                    <label for="meme_diameter_min">Мин. диаметр кружка (px)</label>
+                    <input id="meme_diameter_min" name="meme_diameter_min" type="number" min="200" max="1000" value="500" placeholder="500">
+                    <p class="hint">Используется только при включённом «Случайный размер».</p>
+                </div>
+                <div class="field" id="wrap_diameter_max">
+                    <label for="meme_diameter_max">Макс. диаметр кружка (px)</label>
+                    <input id="meme_diameter_max" name="meme_diameter_max" type="number" min="200" max="1000" value="800" placeholder="800">
+                </div>
+
+                <div class="field">
+                    <label for="meme_y">Позиция кружка по вертикали (px)</label>
+                    <input id="meme_y" name="meme_y" type="number" min="200" max="1720" value="640">
+                    <p class="hint">0 — верх кадра, 1920 — низ (по умолчанию в верхней трети).</p>
+                </div>
+
+                <div class="field">
+                    <label for="bg_start">Начало фона (секунды)</label>
+                    <input id="bg_start" name="bg_start" type="number" min="0" step="0.1" placeholder="Авто">
+                    <p class="hint">С какой секунды брать паркур. Оставь пустым — случайное место.</p>
+                </div>
+
+                <div class="field">
+                    <label for="bg_end">Конец фона (секунды)</label>
+                    <input id="bg_end" name="bg_end" type="number" min="0" step="0.1" placeholder="Авто">
+                    <p class="hint">До какой секунды использовать фон.</p>
+                </div>
+            </div>
+
+            <h3>Настройка СДВГ-вставки</h3>
+            <div class="field-grid">
+                <div class="field">
+                    <label for="snippet">СДВГ-вставка</label>
+                    <select id="snippet" name="snippet">
+                        <option value="">Рандом / нет</option>
+                        {% for s in snippets %}
+                            <option value="{{ s }}">{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="hint">Файлы из `input/snippets` (опционально).</p>
+                </div>
+                <div class="field">
+                    <label for="snippet_height">Высота вставки (px)</label>
+                    <input id="snippet_height" name="snippet_height" type="number" min="100" max="800" value="400">
+                    <p class="hint">Высота полосы СДВГ-ролика на кадре.</p>
+                </div>
+                <div class="field">
+                    <label for="snippet_y">Позиция по вертикали (px)</label>
+                    <input id="snippet_y" name="snippet_y" type="number" min="400" max="1920" value="1500">
+                    <p class="hint">Центр вставки по Y (0 — верх, 1920 — низ).</p>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn primary" type="submit">Собрать ролик(и)</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card" id="preview">
+        <h2>Превью кадра</h2>
+        <div id="preview-frame" class="preview-frame">
+            <video id="preview-bg" class="preview-bg" muted loop playsinline></video>
+            <video id="preview-meme" class="preview-meme" muted loop playsinline></video>
+            <video id="preview-snippet" class="preview-snippet" muted loop playsinline></video>
+        </div>
+        <p class="hint">
+            Здесь показано, как мем-кружок ляжет поверх фона: используются выбранные мем, фон и параметры диаметра/позиции.
+            Снизу дополнительно показывается СДВГ-вставка, если она выбрана. Превью упрощённое, но по расположению близко к итоговому ролику.
+        </p>
+    </section>
+
+    <section class="card">
+        <h2>Папки проекта</h2>
+        <ul>
+            <li><code>input/raw_memes</code> — скачанные чужие мемы (сырая загрузка)</li>
+            <li><code>input/memes</code> — обрезанные мемы-кружки</li>
+            <li><code>input/backgrounds</code> — майнкрафт-паркуры (фон)</li>
+            <li><code>input/snippets</code> — СДВГ-вставки</li>
+            <li><code>input/raw_photos</code> — фото для логотипа; результат в <code>output/photos_logo</code></li>
+            <li><code>output</code> — готовые ролики</li>
+        </ul>
+    </section>
+</div>
+<script src="/static/preview.js"></script>
+<script>
+(function() {
+    var cb = document.getElementById("diameter_random");
+    var wrapMin = document.getElementById("wrap_diameter_min");
+    var wrapMax = document.getElementById("wrap_diameter_max");
+    if (!cb || !wrapMin || !wrapMax) return;
+    function toggle() {
+        var show = cb.checked;
+        wrapMin.style.display = show ? "" : "none";
+        wrapMax.style.display = show ? "" : "none";
+    }
+    cb.addEventListener("change", toggle);
+    toggle();
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Редактор мемов</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Редактор мемов</h1>
+        <p>Выбери, какие загруженные мемы обрезать под кружок</p>
+        <div class="header__actions">
+            <a href="/" class="btn ghost">← На главную</a>
+            <a href="/photos-logo" class="btn primary">Фото и логотип</a>
+        </div>
+    </header>
+
+    <section class="card">
+        <h2>Сырые мемы (input/raw_memes)</h2>
+        {% if not raw_memes %}
+            <p class="hint">Положи .mp4 файлы в <code>input/raw_memes</code>, затем обнови страницу.</p>
+        {% else %}
+            <form method="post" action="/preprocess-memes" data-show-processing>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="limit">Сколько файлов обработать за раз</label>
+                        <input id="limit" name="limit" type="number" min="1" placeholder="Все">
+                        <p class="hint">Оставь пустым, чтобы резать все выбранные.</p>
+                    </div>
+
+                    <div class="field">
+                        <label class="checkbox-row">
+                            <input type="checkbox" name="mute_audio">
+                            <span>Обрезать без звука</span>
+                        </label>
+                        <p class="hint">Видео для фермы обычно идут со звуком из мема, но можно заранее вырезать аудио.</p>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label>Глобальное кадрирование для всех выбранных</label>
+                    <p class="hint">Потяни мышкой по предпросмотру ниже, чтобы выбрать кружок как в Фотошопе — он будет применён ко всем видео.</p>
+                </div>
+
+                <div class="snip-container">
+                    <video id="global-snip-video" class="meme-video" src="/media/raw-memes/{{ raw_memes[0] | urlencode }}" muted autoplay loop preload="metadata"></video>
+                    <div id="global-snip-overlay" class="snip-overlay">
+                        <div id="global-snip-rect" class="snip-rect" hidden></div>
+                    </div>
+                </div>
+
+                <input id="global_circle_cx" name="global_circle_cx" type="hidden" value="0.5">
+                <input id="global_circle_cy" name="global_circle_cy" type="hidden" value="0.5">
+                <input id="global_circle_r" name="global_circle_r" type="hidden" value="0.25">
+
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="global_start">Начало мема (секунды)</label>
+                        <input id="global_start" name="global_start" type="number" min="0" step="0.1" placeholder="С самого начала">
+                        <p class="hint">С какой секунды брать мем‑ролик. Пусто — с начала файла.</p>
+                    </div>
+
+                    <div class="field">
+                        <label for="global_end">Конец мема (секунды)</label>
+                        <input id="global_end" name="global_end" type="number" min="0" step="0.1" placeholder="До конца файла">
+                        <p class="hint">До какой секунды использовать мем. Можно задать только начало, только конец или оба.</p>
+                    </div>
+                </div>
+
+                <div class="memes-grid">
+                    {% for name in raw_memes %}
+                        <div class="meme-card">
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="files" value="{{ name }}">
+                                <span>{{ name }}</span>
+                            </label>
+                            <video class="meme-video" src="/media/raw-memes/{{ name | urlencode }}" controls preload="metadata"></video>
+                            <p class="hint">
+                                Центральный квадрат — потом в сборке он пойдёт в кружок.
+                                <a href="/memes/{{ name | urlencode }}">Тонкая настройка</a>
+                            </p>
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn primary" type="submit">Обрезать выбранные мемы</button>
+                </div>
+            </form>
+            <form method="post" action="/preprocess-stop" class="form-actions form-actions--flush">
+                <button class="btn danger" type="submit">Стоп обрезки между файлами</button>
+            </form>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h2>Готовые мемы (input/memes)</h2>
+        {% if not prepared_memes %}
+            <p class="hint">Пока нет подготовленных мемов.</p>
+        {% else %}
+            <div class="memes-grid">
+                {% for name in prepared_memes %}
+                    <div class="meme-card">
+                        <div class="meme-name">{{ name }}</div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    </section>
+</div>
+
+<div id="processing-overlay" class="processing-overlay" hidden>
+    <div class="processing-dialog">
+        <div class="spinner"></div>
+        <div class="processing-text">Идёт обрезка выбранных мемов…</div>
+        <div class="processing-hint">Не закрывай вкладку — дождись окончания обработки.</div>
+    </div>
+</div>
+
+<script src="/static/memes_snip.js"></script>
+<script src="/static/processing.js"></script>
+</body>
+</html>
+

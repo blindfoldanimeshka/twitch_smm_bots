@@ -1,0 +1,12 @@
+# Backend .dockerignore
+node_modules
+frontend
+templates
+*.md
+.git
+.gitignore
+.env
+.env.local
+bot.exe
+*.log
+.claude

@@ -18,7 +18,7 @@ export interface Bot {
 export interface CreateBotRequest {
   id: string;
   twitch_login: string;
-  oauth_token: string;
+  password: string;
   name: string;
   personality: string;
   min_delay_sec: number;
@@ -55,6 +55,20 @@ export interface Stats {
   enabled_proxies: number;
 }
 
+export interface Settings {
+  id: string;
+  channels: string[];
+  debug_mode: boolean;
+  debug_channel: string;
+  positive_prompt: string;
+  negative_prompt: string;
+  max_tokens: number;
+  audio_enabled: boolean;
+  rotation_enabled: boolean;
+  rotation_interval: number;
+  updated_at: string;
+}
+
 const client = axios.create({
   baseURL: config.apiUrl,
   headers: {
@@ -82,4 +96,8 @@ export const api = {
 
   // Stats
   getStats: () => client.get<Stats>('/api/stats'),
+
+  // Settings
+  getSettings: () => client.get<Settings>('/api/settings'),
+  updateSettings: (data: Settings) => client.post('/api/settings', data),
 };

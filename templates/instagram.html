@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Заливка в Instagram</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Заливка в Instagram</h1>
+        <p>Reels 9:16 из папки <code>output</code>. Доступ по cookies.</p>
+        <div class="header__actions">
+            <a href="/" class="btn ghost">← На главную</a>
+        </div>
+    </header>
+
+    <section id="ig-progress-block" class="card ig-progress" hidden>
+        <h2>Прогресс загрузки</h2>
+        <div class="ig-progress-bar-wrap">
+            <div id="ig-progress-fill" class="ig-progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <p id="ig-progress-detail" class="ig-progress-detail"></p>
+        <form id="ig-cancel-form" method="post" action="/instagram/cancel" class="form-actions form-actions--flush">
+            <input type="hidden" name="job_id" id="ig-cancel-job-id" value="">
+            <button type="submit" class="btn danger" id="ig-cancel-btn">Отменить</button>
+        </form>
+        <p id="ig-progress-error" class="ig-progress-error" hidden></p>
+        <div id="ig-bot-view-wrap" style="display: none;">
+            <h3>Что видит бот</h3>
+            <img id="ig-bot-view" src="" alt="Скриншот экрана бота" />
+        </div>
+        <div id="ig-results-wrap" hidden><strong>Результаты:</strong><ul id="ig-results-list" class="ig-results-list"></ul></div>
+    </section>
+
+    {% if error %}
+        <div class="alert alert--error">{{ error }}</div>
+    {% endif %}
+    {% if message %}
+        <div class="alert">{{ message }}</div>
+    {% endif %}
+    {% if upload_results %}
+        <div class="card">
+            <h2>Результаты загрузки</h2>
+            <ul>
+                {% for r in upload_results %}
+                    <li><strong>{{ r.path }}</strong>: {% if r.ok %}<span class="upload-results__ok">{{ r.message }}</span>{% else %}<span class="upload-results__fail">{{ r.message }}</span>{% endif %}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    <section class="card">
+        <h2>Доступ по cookies</h2>
+        <p class="hint">Откройте instagram.com в браузере, войдите. F12 → Application → Cookies → instagram.com → экспорт в JSON (или расширение EditThisCookie). Вставьте сюда.</p>
+        <form method="post" action="/instagram/upload" id="instagram-form">
+            <div class="field ig-field-gap">
+                <label for="cookies_json">Cookies (JSON)</label>
+                <textarea id="cookies_json" name="cookies_json" rows="4" autocomplete="off" placeholder='[{"name":"sessionid","value":"...","domain":".instagram.com","path":"/"}, ...]'></textarea>
+                <label class="checkbox-row"><input type="checkbox" id="remember_cookies" name="remember_cookies" value="1"><span>Запомнить cookies в браузере</span></label>
+            </div>
+            <div class="field ig-field-gap">
+                <label for="caption">Описание (caption)</label>
+                <textarea id="caption" name="caption" rows="3" placeholder="Текст к Reels, хештеги…" class="ig-caption-text"></textarea>
+            </div>
+            <h3>Видео из output (9:16)</h3>
+            {% if not videos %}
+                <p class="hint">В папке <code>output</code> нет видео 9:16. Соберите ролики на главной.</p>
+            {% else %}
+                <ul class="ig-video-list">
+                    {% for name, path in videos %}
+                        <li><label class="checkbox-row"><input type="checkbox" name="videos" value="{{ name }}"><span><code>{{ name }}</code></span></label></li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+            <div class="form-actions">
+                <button class="btn primary" type="submit" {% if not videos %}disabled{% endif %}>Залить в Instagram</button>
+            </div>
+        </form>
+    </section>
+</div>
+<script>
+(function() {
+    var KEY_COOKIES = "instagram_cookies_json";
+    var KEY_CAPTION = "instagram_caption";
+    var KEY_REMEMBER = "instagram_remember_cookies";
+    var cookiesJson = document.getElementById("cookies_json");
+    var caption = document.getElementById("caption");
+    var rememberCookies = document.getElementById("remember_cookies");
+    var form = document.getElementById("instagram-form");
+
+    form.addEventListener("submit", function(ev) {
+        if (!cookiesJson || !cookiesJson.value.trim()) {
+            ev.preventDefault();
+            alert("Вставьте cookies из вкладки Instagram.");
+        }
+    });
+
+    function load() {
+        try {
+            if (localStorage.getItem(KEY_CAPTION)) caption.value = localStorage.getItem(KEY_CAPTION);
+            if (localStorage.getItem(KEY_REMEMBER) === "1" && rememberCookies && cookiesJson) {
+                rememberCookies.checked = true;
+                if (localStorage.getItem(KEY_COOKIES)) cookiesJson.value = localStorage.getItem(KEY_COOKIES);
+            }
+        } catch (e) {}
+    }
+    function save() {
+        try {
+            localStorage.setItem(KEY_CAPTION, caption.value);
+            if (rememberCookies && cookiesJson) {
+                if (rememberCookies.checked) {
+                    localStorage.setItem(KEY_COOKIES, cookiesJson.value);
+                    localStorage.setItem(KEY_REMEMBER, "1");
+                } else localStorage.setItem(KEY_REMEMBER, "0");
+            }
+        } catch (e) {}
+    }
+    load();
+    form.addEventListener("submit", save);
+    caption.addEventListener("blur", save);
+    if (cookiesJson) cookiesJson.addEventListener("blur", function() { if (rememberCookies && rememberCookies.checked) save(); });
+    if (rememberCookies) rememberCookies.addEventListener("change", save);
+
+    var jobId = "{{ job_id }}" || (function() { var m = /job_id=([^&]+)/.exec(window.location.search); return m ? m[1] : ""; })();
+    if (jobId) {
+        var progressBlock = document.getElementById("ig-progress-block");
+        var progressFill = document.getElementById("ig-progress-fill");
+        var progressDetail = document.getElementById("ig-progress-detail");
+        var progressError = document.getElementById("ig-progress-error");
+        var cancelBtn = document.getElementById("ig-cancel-btn");
+        var cancelJobId = document.getElementById("ig-cancel-job-id");
+        var resultsWrap = document.getElementById("ig-results-wrap");
+        var resultsList = document.getElementById("ig-results-list");
+        cancelJobId.value = jobId;
+        progressBlock.hidden = false;
+
+        var botViewWrap = document.getElementById("ig-bot-view-wrap");
+        var botViewImg = document.getElementById("ig-bot-view");
+        var screenshotUrl = "/static/upload_screenshots/" + encodeURIComponent(jobId) + "/latest.jpg";
+        var botViewInterval = setInterval(function() {
+            if (!botViewImg) return;
+            botViewImg.src = screenshotUrl + "?t=" + Date.now();
+            botViewImg.onerror = function() { botViewImg.style.display = "none"; };
+            botViewImg.onload = function() { botViewImg.style.display = "block"; if (botViewWrap) botViewWrap.style.display = "block"; };
+        }, 1000);
+
+        var evtSource = new EventSource("/instagram/stream?job_id=" + encodeURIComponent(jobId));
+        function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+        evtSource.onmessage = function(e) {
+            var d = JSON.parse(e.data);
+            var total = d.total || 1, current = d.current || 0;
+            progressFill.style.width = (total ? Math.round((current / total) * 100) : 0) + "%";
+            progressDetail.textContent = d.detail || "";
+            if (d.status === "cancelled") { progressDetail.textContent = "Отменено."; if (cancelBtn) cancelBtn.hidden = true; evtSource.close(); }
+            if (d.error) { progressError.textContent = d.error; progressError.hidden = false; if (cancelBtn) cancelBtn.hidden = true; evtSource.close(); }
+            if (d.status === "done") {
+                if (cancelBtn) cancelBtn.hidden = true;
+                clearInterval(botViewInterval);
+                if (d.results && d.results.length) {
+                    resultsWrap.hidden = false;
+                    resultsList.innerHTML = d.results.map(function(r) {
+                        return "<li><strong>" + esc(r.path) + "</strong>: <span style=\"color:" + (r.ok ? "#86efac" : "#f87171") + "\">" + esc(r.message) + "</span></li>";
+                    }).join("");
+                }
+                evtSource.close();
+            }
+            if (d.status === "cancelled" || d.error) clearInterval(botViewInterval);
+        };
+        evtSource.onerror = function() { evtSource.close(); clearInterval(botViewInterval); };
+        document.getElementById("ig-cancel-form").addEventListener("submit", function(ev) {
+            ev.preventDefault();
+            fetch("/instagram/cancel", { method: "POST", body: new FormData(this) }).then(function() {
+                if (cancelBtn) cancelBtn.hidden = true;
+                progressDetail.textContent = "Отмена…";
+            });
+        });
+    }
+})();
+</script>
+</body>
+</html>

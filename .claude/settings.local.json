@@ -1,12 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(go build *)",
-      "Bash(npm create *)",
-      "Bash(npm install *)",
-      "Bash(npm run *)",
-      "Bash(grep -E \"\\\\.md$|\\\\.go$|\\\\.yml$|frontend|internal|db\")",
-      "Bash(git add *)"
+      "Bash(git init *)",
+      "Bash(docker compose ps *)"
     ]
   }
 }

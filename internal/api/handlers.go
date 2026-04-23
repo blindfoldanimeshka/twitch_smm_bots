@@ -20,22 +20,33 @@ type BotManager interface {
 	StopAll() error
 }
 
+type SettingsManager interface {
+	ApplySettings(ctx context.Context, settings *storage.Settings) error
+}
+
 type BotInfo struct {
 	Config  storage.BotConfig
 	Running bool
 }
 
 type Handler struct {
-	manager BotManager
-	store   *storage.Store
-	hub     *Hub
+	manager         BotManager
+	settingsManager SettingsManager
+	store           *storage.Store
+	hub             *Hub
 }
 
 func NewHandler(manager BotManager, store *storage.Store, hub *Hub) *Handler {
+	var settingsManager SettingsManager
+	if sm, ok := manager.(SettingsManager); ok {
+		settingsManager = sm
+	}
+
 	return &Handler{
-		manager: manager,
-		store:   store,
-		hub:     hub,
+		manager:         manager,
+		settingsManager: settingsManager,
+		store:           store,
+		hub:             hub,
 	}
 }
 
@@ -109,7 +120,7 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ID == "" || req.TwitchLogin == "" || req.OAuthToken == "" {
+	if req.ID == "" || req.TwitchLogin == "" || req.Password == "" {
 		http.Error(w, `{"error":"missing required fields"}`, http.StatusBadRequest)
 		return
 	}
@@ -117,7 +128,7 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 	cfg := storage.BotConfig{
 		ID:              req.ID,
 		TwitchLogin:     req.TwitchLogin,
-		OAuthToken:      req.OAuthToken,
+		Password:        req.Password,
 		Name:            req.Name,
 		Personality:     req.Personality,
 		MinDelaySec:     req.MinDelaySec,
@@ -375,4 +386,44 @@ func (h *Handler) DeleteProxy(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	settings, err := h.store.GetSettings(ctx)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get settings"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
+}
+
+func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var settings storage.Settings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.store.UpdateSettings(ctx, &settings); err != nil {
+		http.Error(w, `{"error":"failed to update settings"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if h.settingsManager != nil {
+		if err := h.settingsManager.ApplySettings(ctx, &settings); err != nil {
+			http.Error(w, `{"error":"settings saved but failed to apply at runtime"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }

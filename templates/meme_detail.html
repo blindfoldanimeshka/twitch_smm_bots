@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Настройка мема {{ filename }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Настройка мема</h1>
+        <p><code>{{ filename }}</code></p>
+        <div class="header__actions">
+            <a href="/memes" class="btn ghost">← К списку мемов</a>
+        </div>
+    </header>
+
+    <section class="card">
+        <h2>Превью и кадрирование</h2>
+        <div class="snip-container">
+            <video id="snip-video" class="meme-video" src="/media/raw-memes/{{ filename | urlencode }}" controls preload="metadata"></video>
+            <div id="snip-overlay" class="snip-overlay">
+                <div id="snip-rect" class="snip-rect" hidden></div>
+            </div>
+        </div>
+        <p class="hint">Потяни мышкой по видео, чтобы выделить кружок как в Фотошопе — эта круговая область станет финальным мем‑кружком.</p>
+    </section>
+
+    <section class="card">
+        <h2>Параметры обрезки</h2>
+        <form id="snip-form" method="post" action="/memes/{{ filename | urlencode }}" data-show-processing>
+            <input id="circle_cx" name="circle_cx" type="hidden" value="0.5">
+            <input id="circle_cy" name="circle_cy" type="hidden" value="0.5">
+            <input id="circle_r" name="circle_r" type="hidden" value="0.25">
+
+            <div class="field-grid">
+                <div class="field">
+                    <label for="start_time">Начало мема (секунды)</label>
+                    <input id="start_time" name="start_time" type="number" min="0" step="0.1" placeholder="С самого начала">
+                    <p class="hint">С какой секунды резать этот мем. Пусто — с начала.</p>
+                </div>
+
+                <div class="field">
+                    <label for="end_time">Конец мема (секунды)</label>
+                    <input id="end_time" name="end_time" type="number" min="0" step="0.1" placeholder="До конца файла">
+                    <p class="hint">До какой секунды использовать мем. Можно задать только начало, только конец или оба.</p>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="checkbox-row">
+                    <input type="checkbox" name="mute_audio">
+                    <span>Сохранить без звука</span>
+                </label>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn primary" type="submit">Обрезать этот мем</button>
+            </div>
+        </form>
+    </section>
+</div>
+
+<div id="processing-overlay" class="processing-overlay" hidden>
+    <div class="processing-dialog">
+        <div class="spinner"></div>
+        <div class="processing-text">Идёт обрезка этого мема…</div>
+        <div class="processing-hint">Подожди, пока видео дорежется, не закрывай вкладку.</div>
+    </div>
+</div>
+
+<script src="/static/meme_snip.js"></script>
+<script src="/static/processing.js"></script>
+</body>
+</html>
+

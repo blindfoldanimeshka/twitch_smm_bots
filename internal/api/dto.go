@@ -19,7 +19,7 @@ type BotDTO struct {
 type CreateBotRequest struct {
 	ID              string `json:"id"`
 	TwitchLogin     string `json:"twitch_login"`
-	OAuthToken      string `json:"oauth_token"`
+	Password        string `json:"password"`
 	Name            string `json:"name"`
 	Personality     string `json:"personality"`
 	MinDelaySec     int    `json:"min_delay_sec"`

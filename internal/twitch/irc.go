@@ -15,9 +15,9 @@ import (
 const twitchAddr = "irc.chat.twitch.tv:6697"
 
 type IRCClient struct {
-	login   string
-	token   string
-	channel string
+	login    string
+	password string
+	channel  string
 
 	mu          sync.Mutex
 	conn        net.Conn
@@ -28,18 +28,17 @@ type IRCClient struct {
 	cancel      context.CancelFunc
 }
 
-func NewIRCClient(login, token, channel string) *IRCClient {
+func NewIRCClient(login, password, channel string) *IRCClient {
 	ch := channel
 	if !strings.HasPrefix(ch, "#") {
 		ch = "#" + ch
 	}
 
-	tok := strings.TrimSpace(token)
-	if tok != "" && !strings.HasPrefix(strings.ToLower(tok), "oauth:") {
-		tok = "oauth:" + tok
+	return &IRCClient{
+		login:    login,
+		password: strings.TrimSpace(password),
+		channel:  strings.ToLower(ch),
 	}
-
-	return &IRCClient{login: login, token: tok, channel: strings.ToLower(ch)}
 }
 
 func (c *IRCClient) Connect() error {
@@ -60,7 +59,7 @@ func (c *IRCClient) Connect() error {
 	c.connected = true
 	c.lastPing = time.Now()
 
-	if err := c.sendRawLocked("PASS " + c.token); err != nil {
+	if err := c.sendRawLocked("PASS " + c.password); err != nil {
 		c.closeLocked()
 		return err
 	}

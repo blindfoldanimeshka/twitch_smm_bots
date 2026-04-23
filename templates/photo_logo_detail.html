@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Логотип — {{ filename }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Одно фото</h1>
+        <p><code>{{ filename }}</code></p>
+        <div class="header__actions">
+            <a href="/photos-logo" class="btn ghost">← К списку фото</a>
+        </div>
+    </header>
+
+    <section class="card">
+        <h2>Превью и рамка</h2>
+        <div class="snip-container logo-snip-container">
+            <img id="detail-logo-preview" class="meme-video" src="/media/raw-photos/{{ filename | urlencode }}" alt="" decoding="async">
+            <div id="detail-logo-overlay" class="snip-overlay">
+                <div id="detail-logo-rect" class="logo-snip-rect" hidden></div>
+            </div>
+        </div>
+        <p class="hint">Перемещай рамку или меняй размер за правый нижний угол.</p>
+    </section>
+
+    <section class="card">
+        <h2>Параметры</h2>
+        <form method="post" action="/photos-logo/{{ filename | urlencode }}" enctype="multipart/form-data" data-show-processing>
+            <input id="detail_logo_x" name="logo_x" type="hidden" value="0.1">
+            <input id="detail_logo_y" name="logo_y" type="hidden" value="0.1">
+            <input id="detail_logo_w" name="logo_w" type="hidden" value="0.25">
+            <input id="detail_logo_h" name="logo_h" type="hidden" value="0.12">
+
+            <div class="field-grid">
+                <div class="field">
+                    <label for="detail_logo_opacity">Прозрачность (0–1)</label>
+                    <input id="detail_logo_opacity" name="logo_opacity" type="number" min="0" max="1" step="0.05" value="1">
+                </div>
+                <div class="field">
+                    <label for="detail_logo">Логотип</label>
+                    <input id="detail_logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp">
+                    <p class="hint">
+                        {% if has_default_logo %}
+                            По умолчанию — файл из <code>input/logo</code>.
+                        {% else %}
+                            Загрузи или положи <code>input/logo/logo.png</code>.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn primary" type="submit">Сохранить в output/photos_logo</button>
+            </div>
+        </form>
+    </section>
+</div>
+
+<div id="processing-overlay" class="processing-overlay" hidden>
+    <div class="processing-dialog">
+        <div class="spinner"></div>
+        <div class="processing-text">Обрабатываю фото…</div>
+        <div class="processing-hint">Подожди завершения.</div>
+    </div>
+</div>
+
+<script src="/static/photos_logo_snip.js"></script>
+<script src="/static/processing.js"></script>
+</body>
+</html>

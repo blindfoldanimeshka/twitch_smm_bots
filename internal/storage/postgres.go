@@ -17,18 +17,41 @@ const (
 CREATE TABLE IF NOT EXISTS bots (
     id TEXT PRIMARY KEY,
     twitch_login TEXT NOT NULL,
-    oauth_token TEXT NOT NULL,
+    password TEXT NOT NULL,
     name TEXT NOT NULL,
     personality TEXT NOT NULL,
     min_delay_sec INT NOT NULL DEFAULT 45,
     max_delay_sec INT NOT NULL DEFAULT 180,
     rate_limit_per_min INT NOT NULL DEFAULT 10,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    current_channel TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT bots_min_max_delay_check CHECK (min_delay_sec > 0 AND max_delay_sec >= min_delay_sec),
     CONSTRAINT bots_rate_limit_check CHECK (rate_limit_per_min > 0)
 );
+
+-- Миграция: переименовываем oauth_token в password если колонка существует
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'bots' AND column_name = 'oauth_token'
+    ) THEN
+        ALTER TABLE bots RENAME COLUMN oauth_token TO password;
+    END IF;
+END $$;
+
+-- Миграция: добавляем current_channel если не существует
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'bots' AND column_name = 'current_channel'
+    ) THEN
+        ALTER TABLE bots ADD COLUMN current_channel TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN
@@ -49,13 +72,14 @@ CREATE TRIGGER bots_set_updated_at
 type BotConfig struct {
 	ID              string
 	TwitchLogin     string
-	OAuthToken      string
+	Password        string
 	Name            string
 	Personality     string
 	MinDelaySec     int
 	MaxDelaySec     int
 	RateLimitPerMin int
 	Enabled         bool
+	CurrentChannel  string
 }
 
 type Store struct {
@@ -99,7 +123,7 @@ func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
 	defer cancel()
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled
+		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel
 		FROM bots
 		ORDER BY id`)
 	if err != nil {
@@ -113,13 +137,14 @@ func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
 		if err := rows.Scan(
 			&b.ID,
 			&b.TwitchLogin,
-			&b.OAuthToken,
+			&b.Password,
 			&b.Name,
 			&b.Personality,
 			&b.MinDelaySec,
 			&b.MaxDelaySec,
 			&b.RateLimitPerMin,
 			&b.Enabled,
+			&b.CurrentChannel,
 		); err != nil {
 			return nil, fmt.Errorf("scan bot: %w", err)
 		}
@@ -153,10 +178,10 @@ func (s *Store) GetBot(ctx context.Context, botID string) (*BotConfig, error) {
 
 	var b BotConfig
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled
+		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel
 		FROM bots WHERE id = $1`, botID).Scan(
-		&b.ID, &b.TwitchLogin, &b.OAuthToken, &b.Name, &b.Personality,
-		&b.MinDelaySec, &b.MaxDelaySec, &b.RateLimitPerMin, &b.Enabled,
+		&b.ID, &b.TwitchLogin, &b.Password, &b.Name, &b.Personality,
+		&b.MinDelaySec, &b.MaxDelaySec, &b.RateLimitPerMin, &b.Enabled, &b.CurrentChannel,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get bot: %w", err)
@@ -169,10 +194,10 @@ func (s *Store) CreateBot(ctx context.Context, cfg BotConfig) error {
 	defer cancel()
 
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO bots (id, twitch_login, oauth_token, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		cfg.ID, cfg.TwitchLogin, cfg.OAuthToken, cfg.Name, cfg.Personality,
-		cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin, cfg.Enabled,
+		INSERT INTO bots (id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		cfg.ID, cfg.TwitchLogin, cfg.Password, cfg.Name, cfg.Personality,
+		cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin, cfg.Enabled, cfg.CurrentChannel,
 	)
 	if err != nil {
 		return fmt.Errorf("create bot: %w", err)
@@ -221,6 +246,20 @@ func (s *Store) DeleteBot(ctx context.Context, botID string) error {
 	cmd, err := s.pool.Exec(ctx, `DELETE FROM bots WHERE id = $1`, botID)
 	if err != nil {
 		return fmt.Errorf("delete bot: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("bot not found: %s", botID)
+	}
+	return nil
+}
+
+func (s *Store) UpdateBotChannel(ctx context.Context, botID string, channel string) error {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
+	cmd, err := s.pool.Exec(ctx, `UPDATE bots SET current_channel = $2 WHERE id = $1`, botID, channel)
+	if err != nil {
+		return fmt.Errorf("update bot channel: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("bot not found: %s", botID)

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Сборка роликов</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+{% include "includes/site_nav.html" %}
+<div class="page">
+    <header class="header">
+        <h1>Сборка роликов</h1>
+        <p id="progress-title">Запуск…</p>
+        <div class="header__actions">
+            <a href="/" class="btn ghost">На главную</a>
+        </div>
+    </header>
+
+    <section class="card progress-card">
+        <h2>Прогресс</h2>
+        <div class="progress-bar-wrap">
+            <div id="progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <p id="progress-detail" class="progress-detail"></p>
+        <p id="progress-error" class="progress-error" hidden></p>
+        <div id="progress-results" class="progress-results" hidden>
+            <strong>Созданы файлы:</strong>
+            <ul id="results-list"></ul>
+        </div>
+        <div class="form-actions form-actions--flush">
+            <a href="/#build" class="btn primary">Новая сборка</a>
+        </div>
+    </section>
+</div>
+<script>
+(function() {
+    const jobId = new URLSearchParams(window.location.search).get("job_id");
+    if (!jobId) {
+        document.getElementById("progress-title").textContent = "Нет задания.";
+        return;
+    }
+
+    const titleEl = document.getElementById("progress-title");
+    const fillEl = document.getElementById("progress-fill");
+    const detailEl = document.getElementById("progress-detail");
+    const errorEl = document.getElementById("progress-error");
+    const resultsWrap = document.getElementById("progress-results");
+    const resultsList = document.getElementById("results-list");
+    const card = document.querySelector(".progress-card");
+
+    const evtSource = new EventSource("/render/stream?job_id=" + encodeURIComponent(jobId));
+    evtSource.onmessage = function(e) {
+        const d = JSON.parse(e.data);
+        const total = d.total || 1;
+        const current = d.current || 0;
+        const pct = total ? Math.round((current / total) * 100) : 0;
+
+        titleEl.textContent = "Собрано " + current + " из " + total;
+        fillEl.style.width = pct + "%";
+        detailEl.textContent = d.detail || "";
+
+        if (d.error) {
+            errorEl.textContent = d.error;
+            errorEl.hidden = false;
+            evtSource.close();
+        }
+
+        if (d.status === "done") {
+            card.classList.add("progress-done");
+            if (d.results && d.results.length) {
+                resultsWrap.hidden = false;
+                resultsList.innerHTML = d.results.map(function(f) { return "<li><code>" + f + "</code></li>"; }).join("");
+            }
+            evtSource.close();
+        }
+    };
+    evtSource.onerror = function() {
+        evtSource.close();
+    };
+})();
+</script>
+</body>
+</html>
