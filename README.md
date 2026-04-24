@@ -121,6 +121,8 @@ docker compose up -d --build
 - `ffmpeg` — нарезка чанков
 - `faster-whisper` — транскрипция (OpenAI-compatible API)
 
+📖 **Детальная документация:** [docs/AUDIO_TRANSCRIPTION.md](docs/AUDIO_TRANSCRIPTION.md)
+
 ---
 
 ## 📊 Полезные команды
@@ -197,6 +199,9 @@ docker compose restart frontend
 - **Интеграция**: `docs/OPENROUTER.md`
 - **Миграция с LM Studio**: `docs/MIGRATION_TO_OPENROUTER.md`
 - **Тест API**: `scripts/test_openrouter.sh`
+
+### Аудио-транскрипция
+- **Полное руководство**: `docs/AUDIO_TRANSCRIPTION.md`
 
 ### Конфигурация
 - **Пример .env**: `.env.example`
