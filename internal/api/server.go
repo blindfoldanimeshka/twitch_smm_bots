@@ -33,7 +33,12 @@ func NewServer(manager BotManager, store *storage.Store, apiKey string, port int
 
 	router := mux.NewRouter()
 
+	// Rate limiter: 100 запросов в минуту на клиента
+	rateLimiter := NewRateLimiter(100, time.Minute)
+	go rateLimiter.Cleanup()
+
 	api := router.PathPrefix("/api").Subrouter()
+	api.Use(RateLimitMiddleware(rateLimiter))
 	api.Use(AuthMiddleware(apiKey))
 	api.Use(LoggingMiddleware)
 

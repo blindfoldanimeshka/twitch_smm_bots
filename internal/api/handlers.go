@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -146,12 +147,25 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 	if cfg.RateLimitPerMin == 0 {
 		cfg.RateLimitPerMin = 10
 	}
+	if cfg.Personality == "" {
+		cfg.Personality = "нейтрал"
+	}
+
+	// Валидация конфигурации
+	if err := ValidateBotConfig(cfg.ID, cfg.TwitchLogin, cfg.OAuthToken, cfg.Personality, cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"validation failed: %s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := h.store.CreateBot(ctx, cfg); err != nil {
-		http.Error(w, `{"error":"failed to create bot"}`, http.StatusInternalServerError)
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			http.Error(w, `{"error":"bot with this id already exists"}`, http.StatusConflict)
+		} else {
+			http.Error(w, `{"error":"failed to create bot"}`, http.StatusInternalServerError)
+		}
 		return
 	}
 

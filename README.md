@@ -44,6 +44,14 @@ LLM_API_URL=http://host.docker.internal:1234/v1
 LLM_MODEL=local-model
 ```
 
+**Для OpenRouter:**
+```env
+LLM_PROVIDER=openrouter
+LLM_API_URL=https://openrouter.ai/api/v1
+LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
+LLM_API_KEY=sk-or-v1-your-key
+```
+
 ## Полезные команды
 
 ```bash

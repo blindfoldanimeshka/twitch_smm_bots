@@ -1,4 +1,4 @@
-// Package llm provides integration with OpenAI-compatible APIs (LM Studio, Omniroute, OpenAI, etc.)
+// Package llm provides integration with OpenAI-compatible APIs (LM Studio, Omniroute, OpenAI, OpenRouter, etc.)
 package llm
 
 import (
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Client для OpenAI-compatible API (LM Studio, Omniroute, OpenAI, etc.)
+// Client для OpenAI-compatible API (LM Studio, Omniroute, OpenAI, OpenRouter, etc.)
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
@@ -22,7 +22,7 @@ type Client struct {
 }
 
 // NewClient создаёт клиент для OpenAI-compatible API
-// provider: "lmstudio", "omniroute", "openai", "custom"
+// provider: "lmstudio", "omniroute", "openai", "openrouter", "custom"
 func NewClient(baseURL, model, apiKey, provider string) *Client {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:1234/v1"
@@ -30,6 +30,12 @@ func NewClient(baseURL, model, apiKey, provider string) *Client {
 	if provider == "" {
 		provider = "lmstudio"
 	}
+
+	// Автоматически устанавливаем URL для OpenRouter
+	if provider == "openrouter" && baseURL == "http://127.0.0.1:1234/v1" {
+		baseURL = "https://openrouter.ai/api/v1"
+	}
+
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
@@ -62,10 +68,30 @@ type chatResponse struct {
 }
 
 // Generate отправляет запрос к API и возвращает сгенерированный текст
+// Автоматически повторяет запрос до 3 раз при ошибках
 func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	if maxTokens == 0 {
 		maxTokens = 60
 	}
+
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		result, err := c.generateOnce(ctx, systemPrompt, userPrompt, maxTokens)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+		if attempt < 3 {
+			// Exponential backoff: 1s, 2s
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+	}
+
+	return "", fmt.Errorf("failed after 3 attempts: %w", lastErr)
+}
+
+func (c *Client) generateOnce(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 
 	reqBody := chatRequest{
 		Model: c.model,
@@ -91,9 +117,15 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, 
 
 	req.Header.Set("Content-Type", "application/json")
 
-	// Добавить API key если указан (для Omniroute, OpenAI и т.д.)
+	// Добавить API key если указан (для Omniroute, OpenAI, OpenRouter и т.д.)
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	// OpenRouter требует дополнительные заголовки
+	if c.provider == "openrouter" {
+		req.Header.Set("HTTP-Referer", "https://github.com/twitch-smm-bot")
+		req.Header.Set("X-Title", "Twitch SMM Bot")
 	}
 
 	resp, err := c.httpClient.Do(req)
