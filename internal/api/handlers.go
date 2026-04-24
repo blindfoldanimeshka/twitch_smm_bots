@@ -152,7 +152,7 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Валидация конфигурации
-	if err := ValidateBotConfig(cfg.ID, cfg.TwitchLogin, cfg.OAuthToken, cfg.Personality, cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin); err != nil {
+	if err := ValidateBotConfig(cfg.ID, cfg.TwitchLogin, cfg.Password, cfg.Personality, cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"validation failed: %s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
