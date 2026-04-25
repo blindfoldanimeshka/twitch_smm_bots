@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { config } from '../config';
 
 export interface Bot {
@@ -69,13 +69,79 @@ export interface Settings {
   updated_at: string;
 }
 
+export interface ApiError {
+  message: string;
+  status?: number;
+  code?: string;
+}
+
 const client = axios.create({
   baseURL: config.apiUrl,
   headers: {
     'Content-Type': 'application/json',
     'X-API-Key': config.apiKey,
   },
+  timeout: 30000,
 });
+
+// Interceptor для обработки ошибок
+client.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<{ error?: string }>) => {
+    const apiError: ApiError = {
+      message: 'Unknown error occurred',
+      status: error.response?.status,
+    };
+
+    if (error.code === 'ECONNABORTED') {
+      apiError.message = 'Request timeout. Please try again.';
+      apiError.code = 'TIMEOUT';
+    } else if (error.code === 'ERR_NETWORK') {
+      apiError.message = 'Network error. Please check your connection.';
+      apiError.code = 'NETWORK_ERROR';
+    } else if (error.response) {
+      // Сервер ответил с ошибкой
+      apiError.message = error.response.data?.error || `HTTP ${error.response.status}: ${error.response.statusText}`;
+
+      switch (error.response.status) {
+        case 401:
+          apiError.message = 'Unauthorized. Please check your API key.';
+          apiError.code = 'UNAUTHORIZED';
+          break;
+        case 403:
+          apiError.message = 'Access forbidden.';
+          apiError.code = 'FORBIDDEN';
+          break;
+        case 404:
+          apiError.message = 'Resource not found.';
+          apiError.code = 'NOT_FOUND';
+          break;
+        case 409:
+          apiError.message = error.response.data?.error || 'Conflict. Resource already exists.';
+          apiError.code = 'CONFLICT';
+          break;
+        case 429:
+          apiError.message = 'Too many requests. Please slow down.';
+          apiError.code = 'RATE_LIMIT';
+          break;
+        case 500:
+          apiError.message = 'Server error. Please try again later.';
+          apiError.code = 'SERVER_ERROR';
+          break;
+        case 503:
+          apiError.message = 'Service unavailable. Please try again later.';
+          apiError.code = 'SERVICE_UNAVAILABLE';
+          break;
+      }
+    } else if (error.request) {
+      // Запрос был отправлен, но ответа не получено
+      apiError.message = 'No response from server. Please check your connection.';
+      apiError.code = 'NO_RESPONSE';
+    }
+
+    return Promise.reject(apiError);
+  }
+);
 
 export const api = {
   // Bots

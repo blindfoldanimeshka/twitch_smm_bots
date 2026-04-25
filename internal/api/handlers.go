@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"twitch-smm-bot/internal/auth"
 	"twitch-smm-bot/internal/storage"
 )
 
@@ -52,8 +53,52 @@ func NewHandler(manager BotManager, store *storage.Store, hub *Hub) *Handler {
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	health := map[string]interface{}{
+		"status": "healthy",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Проверка БД
+	if h.store != nil {
+		if err := h.store.Ping(ctx); err != nil {
+			health["status"] = "unhealthy"
+			health["database"] = map[string]string{
+				"status": "down",
+				"error":  err.Error(),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(health)
+			return
+		}
+		health["database"] = map[string]string{"status": "up"}
+	}
+
+	// Проверка количества ботов
+	if h.manager != nil {
+		bots := h.manager.ListBots()
+		health["bots"] = map[string]interface{}{
+			"total":   len(bots),
+			"running": countRunningBots(bots),
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(health)
+}
+
+func countRunningBots(bots []BotInfo) int {
+	count := 0
+	for _, bot := range bots {
+		if bot.Running {
+			count++
+		}
+	}
+	return count
 }
 
 func (h *Handler) ListBots(w http.ResponseWriter, r *http.Request) {
@@ -126,10 +171,17 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Хешируем пароль перед сохранением
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, `{"error":"failed to hash password"}`, http.StatusInternalServerError)
+		return
+	}
+
 	cfg := storage.BotConfig{
 		ID:              req.ID,
 		TwitchLogin:     req.TwitchLogin,
-		Password:        req.Password,
+		Password:        hashedPassword,
 		Name:            req.Name,
 		Personality:     req.Personality,
 		MinDelaySec:     req.MinDelaySec,
