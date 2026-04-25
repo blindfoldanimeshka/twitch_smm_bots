@@ -1,4 +1,5 @@
 import React from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import './BotFormModal.css'
 
 interface BotFormModalProps {
@@ -12,7 +13,23 @@ export function BotFormModal({ isOpen, onClose, children, title }: BotFormModalP
   React.useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
-      // Focus trap
+    } else {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen])
+
+  React.useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [isOpen, onClose])
+
+  React.useEffect(() => {
+    if (isOpen) {
       const modal = document.querySelector('.bot-modal')
       if (modal) {
         const focusableElements = modal.querySelectorAll(
@@ -44,54 +61,58 @@ export function BotFormModal({ isOpen, onClose, children, title }: BotFormModalP
           modal.removeEventListener('keydown', handleTab as any)
         }
       }
-    } else {
-      document.body.style.overflow = ''
     }
   }, [isOpen])
 
-  React.useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [isOpen, onClose])
-
-  if (!isOpen) return null
-
   return (
-    <div className="bot-modal-overlay" onClick={onClose}>
-      <div
-        className="bot-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-      >
-        <div className="bot-modal__header">
-          <h2 id="modal-title" className="bot-modal__title">
-            {title}
-          </h2>
-          <button
-            className="bot-modal__close"
-            onClick={onClose}
-            aria-label="Закрыть модальное окно"
-            type="button"
+    <AnimatePresence initial={false}>
+      {isOpen && (
+        <motion.div
+          className="bot-modal-overlay"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+        >
+          <motion.div
+            className="bot-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-title"
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            transition={{ duration: 0.3, ease: [0.2, 0.8, 0.2, 1] }}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M18 6L6 18M6 6L18 18"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        </div>
-        <div className="bot-modal__content">{children}</div>
-      </div>
-    </div>
+            <div className="bot-modal__header">
+              <h2 id="modal-title" className="bot-modal__title">
+                {title}
+              </h2>
+              <motion.button
+                className="bot-modal__close"
+                onClick={onClose}
+                aria-label="Закрыть модальное окно"
+                type="button"
+                whileHover={{ scale: 1.1, rotate: 90 }}
+                whileTap={{ scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M18 6L6 18M6 6L18 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </motion.button>
+            </div>
+            <div className="bot-modal__content">{children}</div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

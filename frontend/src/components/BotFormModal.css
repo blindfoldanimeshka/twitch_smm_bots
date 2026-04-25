@@ -12,16 +12,6 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-6);
-  animation: modalFadeIn 0.2s var(--easing);
-}
-
-@keyframes modalFadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 .bot-modal {
@@ -37,20 +27,8 @@
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  animation: modalSlideUp 0.3s var(--easing);
   position: relative;
   overflow: hidden;
-}
-
-@keyframes modalSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 .bot-modal::before {
@@ -122,7 +100,6 @@
   border-color: var(--primary-500);
   color: var(--primary-500);
   box-shadow: var(--neon-glow-soft);
-  transform: rotate(90deg);
 }
 
 .bot-modal__close:focus-visible {
@@ -166,16 +143,6 @@
     max-width: 100%;
     max-height: 95vh;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    animation: modalSlideUpMobile 0.3s var(--easing);
-  }
-
-  @keyframes modalSlideUpMobile {
-    from {
-      transform: translateY(100%);
-    }
-    to {
-      transform: translateY(0);
-    }
   }
 
   .bot-modal__header {
