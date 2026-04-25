@@ -99,13 +99,13 @@ body::before {
     linear-gradient(90deg, rgba(57,255,106,0.12) 1px, transparent 1px);
   background-size: 20px 20px;
   pointer-events: none;
-  z-index: 2;
+  z-index: 0;
   opacity: 0.4;
 }
 
 .app {
   position: relative;
-  z-index: 3;
+  z-index: 1;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

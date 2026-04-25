@@ -43,7 +43,9 @@
       "Bash(go run *)",
       "Bash(psql -U postgres -c \"CREATE DATABASE twitch_bot_farm;\")",
       "Bash(docker exec *)",
-      "Bash(awk '{print $5}')"
+      "Bash(awk '{print $5}')",
+      "Bash(npx shadcn@latest add @animate-ui/components-backgrounds-bubble)",
+      "Bash(npx shadcn@latest add @animate-ui/components-backgrounds-bubble --yes)"
     ]
   }
 }
