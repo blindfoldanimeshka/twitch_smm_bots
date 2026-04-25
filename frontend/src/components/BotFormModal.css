@@ -1,0 +1,192 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   BOT FORM MODAL - Cyber Grid Modal with Neon Accents
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.bot-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 11, 42, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  animation: modalFadeIn 0.2s var(--easing);
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bot-modal {
+  background: var(--bg-surface);
+  border: 2px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 0 0 1px rgba(57, 255, 106, 0.1),
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    var(--neon-glow-soft);
+  max-width: 680px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideUp 0.3s var(--easing);
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.bot-modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--primary-500),
+    transparent
+  );
+  animation: scanline 3s linear infinite;
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.bot-modal__header {
+  padding: var(--space-6);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(
+    180deg,
+    rgba(57, 255, 106, 0.03) 0%,
+    transparent 100%
+  );
+}
+
+.bot-modal__title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0;
+  text-shadow: var(--neon-glow-soft);
+}
+
+.bot-modal__close {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-base) var(--easing);
+  flex-shrink: 0;
+}
+
+.bot-modal__close:hover {
+  background: var(--bg-elevated);
+  border-color: var(--primary-500);
+  color: var(--primary-500);
+  box-shadow: var(--neon-glow-soft);
+  transform: rotate(90deg);
+}
+
+.bot-modal__close:focus-visible {
+  outline: 2px solid var(--primary-500);
+  outline-offset: 2px;
+}
+
+.bot-modal__content {
+  padding: var(--space-6);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.bot-modal__content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.bot-modal__content::-webkit-scrollbar-track {
+  background: var(--bg-base);
+  border-radius: 4px;
+}
+
+.bot-modal__content::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+  transition: background var(--duration-base);
+}
+
+.bot-modal__content::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-500);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .bot-modal-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .bot-modal {
+    max-width: 100%;
+    max-height: 95vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: modalSlideUpMobile 0.3s var(--easing);
+  }
+
+  @keyframes modalSlideUpMobile {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  .bot-modal__header {
+    padding: var(--space-4);
+  }
+
+  .bot-modal__title {
+    font-size: 1.25rem;
+  }
+
+  .bot-modal__content {
+    padding: var(--space-4);
+  }
+}
