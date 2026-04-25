@@ -1,18 +1,30 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type Settings as SettingsType } from '../api/client'
+import { GridBeam } from '../components/ui/grid-beam'
 
 export default function Settings() {
   const queryClient = useQueryClient()
-  const [channels, setChannels] = useState<string[]>([''])
-  const [debugMode, setDebugMode] = useState(false)
-  const [debugChannel, setDebugChannel] = useState('')
-  const [positivePrompt, setPositivePrompt] = useState('')
-  const [negativePrompt, setNegativePrompt] = useState('')
-  const [maxTokens, setMaxTokens] = useState(60)
-  const [audioEnabled, setAudioEnabled] = useState(false)
-  const [rotationEnabled, setRotationEnabled] = useState(false)
-  const [rotationInterval, setRotationInterval] = useState(60)
+  const [formState, setFormState] = useState<SettingsType>({
+    id: 'default',
+    channels: [''],
+    debug_mode: false,
+    debug_channel: '',
+    positive_prompt: '',
+    negative_prompt: '',
+    max_tokens: 60,
+    audio_enabled: false,
+    rotation_enabled: false,
+    rotation_interval: 60,
+    llm_provider: 'lmstudio',
+    llm_api_url: 'http://127.0.0.1:1234/v1',
+    llm_model: '',
+    llm_api_key: '',
+    updated_at: '',
+  })
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [saveError, setSaveError] = useState(false)
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -24,15 +36,14 @@ export default function Settings() {
 
   useEffect(() => {
     if (settings) {
-      setChannels(settings.channels.length > 0 ? settings.channels : [''])
-      setDebugMode(settings.debug_mode)
-      setDebugChannel(settings.debug_channel)
-      setPositivePrompt(settings.positive_prompt)
-      setNegativePrompt(settings.negative_prompt)
-      setMaxTokens(settings.max_tokens)
-      setAudioEnabled(settings.audio_enabled)
-      setRotationEnabled(settings.rotation_enabled)
-      setRotationInterval(settings.rotation_interval)
+      setFormState({
+        ...settings,
+        channels: settings.channels.length > 0 ? settings.channels : [''],
+        llm_provider: settings.llm_provider || 'lmstudio',
+        llm_api_url: settings.llm_api_url || 'http://127.0.0.1:1234/v1',
+        llm_model: settings.llm_model || '',
+        llm_api_key: settings.llm_api_key || '',
+      })
     }
   }, [settings])
 
@@ -40,49 +51,71 @@ export default function Settings() {
     mutationFn: (data: SettingsType) => api.updateSettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      alert('Настройки сохранены!')
+      setSaveSuccess(true)
+      setSaveError(false)
+      setTimeout(() => setSaveSuccess(false), 3000)
     },
     onError: () => {
-      alert('Ошибка при сохранении настроек')
+      setSaveError(true)
+      setSaveSuccess(false)
+      setTimeout(() => setSaveError(false), 3000)
     },
   })
 
   const addChannel = () => {
-    setChannels([...channels, ''])
+    setFormState(prev => ({ ...prev, channels: [...prev.channels, ''] }))
   }
 
   const removeChannel = (index: number) => {
-    setChannels(channels.filter((_, i) => i !== index))
+    setFormState(prev => ({ ...prev, channels: prev.channels.filter((_, i) => i !== index) }))
   }
 
   const updateChannel = (index: number, value: string) => {
-    const newChannels = [...channels]
-    newChannels[index] = value
-    setChannels(newChannels)
+    setFormState(prev => {
+      const newChannels = [...prev.channels]
+      newChannels[index] = value
+      return { ...prev, channels: newChannels }
+    })
+  }
+
+  const testLLMConnection = async () => {
+    setTestingConnection(true)
+    try {
+      const response = await api.getLLMStatus()
+      if (response.data.available) {
+        alert('✓ Подключение успешно! Провайдер ' + response.data.provider + ' доступен.')
+      } else {
+        alert('✗ Подключение не удалось: ' + (response.data.error || 'Неизвестная ошибка'))
+      }
+    } catch (error) {
+      alert('✗ Ошибка при проверке подключения')
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  const saveLLMSettings = () => {
+    updateSettingsMutation.mutate({
+      ...formState,
+      updated_at: new Date().toISOString(),
+    })
   }
 
   const handleSave = () => {
-    const filteredChannels = channels.filter(ch => ch.trim() !== '')
-
+    const filteredChannels = formState.channels.filter(ch => ch.trim() !== '')
     updateSettingsMutation.mutate({
-      id: 'default',
+      ...formState,
       channels: filteredChannels,
-      debug_mode: debugMode,
-      debug_channel: debugChannel,
-      positive_prompt: positivePrompt,
-      negative_prompt: negativePrompt,
-      max_tokens: maxTokens,
-      audio_enabled: audioEnabled,
-      rotation_enabled: rotationEnabled,
-      rotation_interval: rotationInterval,
       updated_at: new Date().toISOString(),
     })
   }
 
   if (isLoading) {
     return (
-      <div style={{ textAlign: 'center', padding: '3rem' }}>
-        <p>Загрузка настроек...</p>
+      <div style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
+        <p style={{ fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
+          ЗАГРУЗКА НАСТРОЕК...
+        </p>
       </div>
     )
   }
@@ -90,7 +123,7 @@ export default function Settings() {
   return (
     <>
       <header className="hero">
-        <h1 className="hero__title">Настройки системы</h1>
+        <h1 className="hero__title">НАСТРОЙКИ СИСТЕМЫ</h1>
         <p className="hero__lead">
           Глобальные настройки для всех ботов: целевые каналы, режим отладки, промпты для AI и дополнительные функции.
         </p>
@@ -98,36 +131,41 @@ export default function Settings() {
 
       <nav className="quick-tiles">
         <a className="quick-tile" href="#channels">
-          <span className="quick-tile__label">Шаг 1</span>
-          <span className="quick-tile__title">Целевые каналы</span>
+          <span className="quick-tile__label">ШАГ 1</span>
+          <span className="quick-tile__title">ЦЕЛЕВЫЕ КАНАЛЫ</span>
           <p className="quick-tile__desc">Список стримеров, куда боты будут заходить</p>
         </a>
         <a className="quick-tile quick-tile--primary" href="#debug">
-          <span className="quick-tile__label">Тестирование</span>
-          <span className="quick-tile__title">Режим отладки</span>
+          <span className="quick-tile__label">ТЕСТИРОВАНИЕ</span>
+          <span className="quick-tile__title">РЕЖИМ ОТЛАДКИ</span>
           <p className="quick-tile__desc">Проверка ботов без отправки в реальный чат</p>
+        </a>
+        <a className="quick-tile" href="#llm">
+          <span className="quick-tile__label">LLM</span>
+          <span className="quick-tile__title">ПРОВАЙДЕР AI</span>
+          <p className="quick-tile__desc">Настройка подключения к языковой модели</p>
         </a>
         <a className="quick-tile" href="#prompts">
           <span className="quick-tile__label">AI</span>
-          <span className="quick-tile__title">Промпты и поведение</span>
+          <span className="quick-tile__title">ПРОМПТЫ И ПОВЕДЕНИЕ</span>
           <p className="quick-tile__desc">Настройка характера и ограничений нейросети</p>
         </a>
         <a className="quick-tile" href="#advanced">
-          <span className="quick-tile__label">Дополнительно</span>
-          <span className="quick-tile__title">Продвинутые функции</span>
+          <span className="quick-tile__label">ДОПОЛНИТЕЛЬНО</span>
+          <span className="quick-tile__title">ПРОДВИНУТЫЕ ФУНКЦИИ</span>
           <p className="quick-tile__desc">Аудио-подвязка, ротация ботов между стримерами</p>
         </a>
       </nav>
 
       <section className="card" id="channels">
-        <h2>Целевые каналы Twitch</h2>
+        <h2>ЦЕЛЕВЫЕ КАНАЛЫ TWITCH</h2>
         <p className="hint">Укажите список стримеров, в чаты которых будут заходить боты. Можно указать несколько каналов.</p>
 
-        <div style={{ marginTop: '1.5rem' }}>
-          {channels.map((channel, index) => (
-            <div key={index} className="field" style={{ display: 'flex', gap: '0.5rem', alignItems: 'end' }}>
+        <div style={{ marginTop: 'var(--space-6)' }}>
+          {formState.channels.map((channel, index) => (
+            <div key={index} className="field" style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'end' }}>
               <div style={{ flex: 1 }}>
-                <label htmlFor={`channel-${index}`}>Канал {index + 1}</label>
+                <label htmlFor={`channel-${index}`}>КАНАЛ {index + 1}</label>
                 <input
                   id={`channel-${index}`}
                   type="text"
@@ -136,76 +174,184 @@ export default function Settings() {
                   placeholder="streamer_name"
                 />
               </div>
-              {channels.length > 1 && (
+              {formState.channels.length > 1 && (
                 <button
                   type="button"
                   className="btn danger"
                   onClick={() => removeChannel(index)}
                   style={{ marginBottom: '0' }}
                 >
-                  Удалить
+                  ✕ УДАЛИТЬ
                 </button>
               )}
             </div>
           ))}
           <button type="button" className="btn ghost" onClick={addChannel}>
-            + Добавить канал
+            + ДОБАВИТЬ КАНАЛ
           </button>
         </div>
       </section>
 
       <section className="card" id="debug">
-        <h2>Режим отладки</h2>
+        <h2>РЕЖИМ ОТЛАДКИ</h2>
         <p className="hint">
           В режиме отладки боты подключаются к указанному стриму, но сообщения отображаются только в панели управления и не отправляются в реальный чат.
           Это позволяет проверить работу ботов без риска бана.
         </p>
 
-        <div className="field" style={{ marginTop: '1.5rem' }}>
+        <div className="field" style={{ marginTop: 'var(--space-6)' }}>
           <label className="checkbox-row">
             <input
               type="checkbox"
-              checked={debugMode}
-              onChange={(e) => setDebugMode(e.target.checked)}
+              checked={formState.debug_mode}
+              onChange={(e) => setFormState(prev => ({ ...prev, debug_mode: e.target.checked }))}
             />
-            <span>Включить режим отладки</span>
+            <span>ВКЛЮЧИТЬ РЕЖИМ ОТЛАДКИ</span>
           </label>
         </div>
 
-        {debugMode && (
+        {formState.debug_mode && (
           <div className="field">
-            <label htmlFor="debug-channel">Тестовый канал</label>
+            <label htmlFor="debug-channel">ТЕСТОВЫЙ КАНАЛ</label>
             <input
               id="debug-channel"
               type="text"
-              value={debugChannel}
-              onChange={(e) => setDebugChannel(e.target.value)}
+              value={formState.debug_channel}
+              onChange={(e) => setFormState(prev => ({ ...prev, debug_channel: e.target.value }))}
               placeholder="test_streamer"
             />
             <p className="hint">Укажите канал для тестирования (боты будут "подключаться", но не отправлять сообщения)</p>
           </div>
         )}
 
-        {debugMode && (
+        {formState.debug_mode && (
           <div className="alert">
-            <strong>Режим отладки активен!</strong> Все сообщения ботов будут отображаться только в панели управления.
+            <strong>РЕЖИМ ОТЛАДКИ АКТИВЕН!</strong> Все сообщения ботов будут отображаться только в панели управления.
           </div>
         )}
       </section>
 
-      <section className="card" id="prompts">
-        <h2>Промпты и поведение AI</h2>
-        <p className="hint">
-          Настройте глобальные промпты для всех ботов. Позитивный промпт указывает, что боты должны делать, негативный — чего избегать.
-        </p>
+      <GridBeam
+        rows={3}
+        cols={4}
+        colorVariant="neon"
+        theme="dark"
+        active
+        borderRadius={8}
+        className="card"
+        id="llm"
+      >
+        <div style={{ padding: 'var(--space-6)' }}>
+          <h2>НАСТРОЙКИ LLM ПРОВАЙДЕРА</h2>
+          <p className="hint">
+            Настройка подключения к LM Studio для генерации сообщений ботов.
+          </p>
 
-        <div className="field-grid" style={{ marginTop: '1.5rem' }}>
+        <div className="field" style={{ marginTop: 'var(--space-6)' }}>
+          <label htmlFor="llm-provider">ПРОВАЙДЕР</label>
+          <select
+            id="llm-provider"
+            value={formState.llm_provider}
+            onChange={(e) => {
+              setFormState(prev => ({
+                ...prev,
+                llm_provider: e.target.value,
+                llm_api_url: 'http://127.0.0.1:1234/v1',
+              }))
+            }}
+          >
+            <option value="lmstudio">LM Studio (локальный)</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="llm-api-url">API URL</label>
+          <input
+            id="llm-api-url"
+            type="text"
+            value={formState.llm_api_url}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_api_url: e.target.value }))}
+            placeholder="http://127.0.0.1:1234/v1"
+          />
+          <p className="hint">Адрес API endpoint провайдера</p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="llm-model">МОДЕЛЬ</label>
+          <input
+            id="llm-model"
+            type="text"
+            value={formState.llm_model}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_model: e.target.value }))}
+            placeholder="google/gemma-3-4b"
+          />
+          <p className="hint">Название модели (можно оставить пустым для автоматического выбора)</p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="llm-api-key">API KEY</label>
+          <input
+            id="llm-api-key"
+            type="password"
+            value={formState.llm_api_key}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_api_key: e.target.value }))}
+            placeholder="Не требуется"
+            disabled
+          />
+          <p className="hint">API ключ не требуется для LM Studio</p>
+        </div>
+
+        <div className="alert" style={{ marginTop: 'var(--space-4)' }}>
+          <strong>LM Studio:</strong> Убедитесь, что LM Studio запущен и сервер включен на порту 1234.
+          Загрузите модель и нажмите "Start Server" в интерфейсе LM Studio.
+          <br/>
+          Модель загрузится автоматически при первом запросе.
+        </div>
+
+        <div style={{ marginTop: 'var(--space-6)', display: 'flex', gap: 'var(--space-4)' }}>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={testLLMConnection}
+            disabled={testingConnection}
+          >
+            {testingConnection ? '⟳ ПРОВЕРКА...' : '🔌 ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ'}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={saveLLMSettings}
+            disabled={updateSettingsMutation.isPending}
+          >
+            {updateSettingsMutation.isPending ? '⟳ СОХРАНЕНИЕ...' : '💾 СОХРАНИТЬ НАСТРОЙКИ LLM'}
+          </button>
+        </div>
+        </div>
+      </GridBeam>
+
+      <GridBeam
+        rows={2}
+        cols={3}
+        colorVariant="neon"
+        theme="dark"
+        active
+        borderRadius={8}
+        className="card"
+        id="prompts"
+      >
+        <div style={{ padding: 'var(--space-6)' }}>
+          <h2>ПРОМПТЫ И ПОВЕДЕНИЕ AI</h2>
+          <p className="hint">
+            Настройте глобальные промпты для всех ботов. Позитивный промпт указывает, что боты должны делать, негативный — чего избегать.
+          </p>
+
+        <div className="field-grid" style={{ marginTop: 'var(--space-6)' }}>
           <div className="field">
-            <label htmlFor="positive-prompt">Позитивный промпт</label>
+            <label htmlFor="positive-prompt">ПОЗИТИВНЫЙ ПРОМПТ</label>
             <textarea
               id="positive-prompt"
-              value={positivePrompt}
-              onChange={(e) => setPositivePrompt(e.target.value)}
+              value={formState.positive_prompt}
+              onChange={(e) => setFormState(prev => ({ ...prev, positive_prompt: e.target.value }))}
               placeholder="Пиши короткие естественные сообщения, используй сленг, будь дружелюбным..."
               rows={5}
             />
@@ -213,11 +359,11 @@ export default function Settings() {
           </div>
 
           <div className="field">
-            <label htmlFor="negative-prompt">Негативный промпт</label>
+            <label htmlFor="negative-prompt">НЕГАТИВНЫЙ ПРОМПТ</label>
             <textarea
               id="negative-prompt"
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
+              value={formState.negative_prompt}
+              onChange={(e) => setFormState(prev => ({ ...prev, negative_prompt: e.target.value }))}
               placeholder="Не используй эмодзи, не оскорбляй, не спамь, не повторяйся..."
               rows={5}
             />
@@ -226,23 +372,34 @@ export default function Settings() {
         </div>
 
         <div className="field">
-          <label htmlFor="max-tokens">Ограничение по символам (max tokens)</label>
+          <label htmlFor="max-tokens">ОГРАНИЧЕНИЕ ПО СИМВОЛАМ (MAX TOKENS)</label>
           <input
             id="max-tokens"
             type="number"
             min="20"
             max="200"
-            value={maxTokens}
-            onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+            value={formState.max_tokens}
+            onChange={(e) => setFormState(prev => ({ ...prev, max_tokens: parseInt(e.target.value) }))}
           />
           <p className="hint">Максимальная длина генерируемого сообщения (по умолчанию 60)</p>
         </div>
-      </section>
+        </div>
+      </GridBeam>
 
-      <section className="card" id="advanced">
-        <h2>Продвинутые функции</h2>
+      <GridBeam
+        rows={3}
+        cols={2}
+        colorVariant="neon"
+        theme="dark"
+        active
+        borderRadius={8}
+        className="card"
+        id="advanced"
+      >
+        <div style={{ padding: 'var(--space-6)' }}>
+          <h2>ПРОДВИНУТЫЕ ФУНКЦИИ</h2>
 
-        <h3>Аудио/видео подвязка к стриму</h3>
+        <h3 style={{ marginTop: 'var(--space-8)' }}>АУДИО/ВИДЕО ПОДВЯЗКА К СТРИМУ</h3>
         <p className="hint">
           Боты могут анализировать аудио со стрима (через транскрипцию) для понимания контекста и генерации релевантных сообщений.
           Требует дополнительную настройку API для транскрипции.
@@ -252,22 +409,22 @@ export default function Settings() {
           <label className="checkbox-row">
             <input
               type="checkbox"
-              checked={audioEnabled}
-              onChange={(e) => setAudioEnabled(e.target.checked)}
+              checked={formState.audio_enabled}
+              onChange={(e) => setFormState(prev => ({ ...prev, audio_enabled: e.target.checked }))}
             />
-            <span>Включить анализ аудио со стрима</span>
+            <span>ВКЛЮЧИТЬ АНАЛИЗ АУДИО СО СТРИМА</span>
           </label>
         </div>
 
-        {audioEnabled && (
-          <div className="alert" style={{ marginTop: '1rem' }}>
-            <strong>Включено:</strong> Backend будет периодически захватывать аудио стрима и отправлять фрагменты
+        {formState.audio_enabled && (
+          <div className="alert" style={{ marginTop: 'var(--space-4)' }}>
+            <strong>ВКЛЮЧЕНО:</strong> Backend будет периодически захватывать аудио стрима и отправлять фрагменты
             в локальный STT API (OpenAI-compatible endpoint). Укажите переменные `AUDIO_STT_URL`, `AUDIO_STT_MODEL`
             и убедитесь, что доступны `streamlink` и `ffmpeg`.
           </div>
         )}
 
-        <h3 style={{ marginTop: '2rem' }}>Ротация ботов между стримерами</h3>
+        <h3 style={{ marginTop: 'var(--space-8)' }}>РОТАЦИЯ БОТОВ МЕЖДУ СТРИМЕРАМИ</h3>
         <p className="hint">
           Автоматическое переключение ботов между разными каналами по расписанию. Помогает избежать банов и создать видимость активности на нескольких стримах.
         </p>
@@ -276,37 +433,116 @@ export default function Settings() {
           <label className="checkbox-row">
             <input
               type="checkbox"
-              checked={rotationEnabled}
-              onChange={(e) => setRotationEnabled(e.target.checked)}
+              checked={formState.rotation_enabled}
+              onChange={(e) => setFormState(prev => ({ ...prev, rotation_enabled: e.target.checked }))}
             />
-            <span>Включить ротацию ботов</span>
+            <span>ВКЛЮЧИТЬ РОТАЦИЮ БОТОВ</span>
           </label>
         </div>
 
-        {rotationEnabled && (
+        {formState.rotation_enabled && (
           <div className="field">
-            <label htmlFor="rotation-interval">Интервал ротации (минуты)</label>
+            <label htmlFor="rotation-interval">ИНТЕРВАЛ РОТАЦИИ (МИНУТЫ)</label>
             <input
               id="rotation-interval"
               type="number"
               min="10"
               max="1440"
-              value={rotationInterval}
-              onChange={(e) => setRotationInterval(parseInt(e.target.value))}
+              value={formState.rotation_interval}
+              onChange={(e) => setFormState(prev => ({ ...prev, rotation_interval: parseInt(e.target.value) }))}
             />
             <p className="hint">Как часто боты будут переключаться между каналами</p>
           </div>
         )}
-      </section>
+        </div>
+      </GridBeam>
 
       <div className="form-actions">
-        <button className="btn primary" onClick={handleSave}>
-          Сохранить все настройки
+        <button
+          className="btn primary"
+          onClick={handleSave}
+          disabled={updateSettingsMutation.isPending}
+        >
+          {updateSettingsMutation.isPending ? '⟳ СОХРАНЕНИЕ...' : '💾 СОХРАНИТЬ ВСЕ НАСТРОЙКИ'}
         </button>
         <button className="btn ghost" onClick={() => window.location.reload()}>
-          Сбросить изменения
+          ↻ СБРОСИТЬ ИЗМЕНЕНИЯ
         </button>
       </div>
+
+      {/* Toast notifications */}
+      {saveSuccess && (
+        <div style={{
+          position: 'fixed',
+          bottom: 'var(--space-8)',
+          right: 'var(--space-8)',
+          background: 'var(--bg-surface)',
+          border: '2px solid var(--state-success)',
+          color: 'var(--text-primary)',
+          padding: 'var(--space-4) var(--space-6)',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: 'var(--neon-glow)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-3)',
+          zIndex: 1000,
+          animation: 'slideIn 0.3s ease-out',
+          fontFamily: 'var(--font-display)'
+        }}>
+          <span style={{ fontSize: '1.5rem', color: 'var(--state-success)' }}>✓</span>
+          <div>
+            <div style={{ fontWeight: '700', marginBottom: 'var(--space-1)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              НАСТРОЙКИ СОХРАНЕНЫ!
+            </div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.9, color: 'var(--text-secondary)' }}>
+              Изменения применены успешно
+            </div>
+          </div>
+        </div>
+      )}
+
+      {saveError && (
+        <div style={{
+          position: 'fixed',
+          bottom: 'var(--space-8)',
+          right: 'var(--space-8)',
+          background: 'var(--bg-surface)',
+          border: '2px solid var(--state-error)',
+          color: 'var(--text-primary)',
+          padding: 'var(--space-4) var(--space-6)',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 0 8px rgba(255,77,109,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-3)',
+          zIndex: 1000,
+          animation: 'slideIn 0.3s ease-out',
+          fontFamily: 'var(--font-display)'
+        }}>
+          <span style={{ fontSize: '1.5rem', color: 'var(--state-error)' }}>✗</span>
+          <div>
+            <div style={{ fontWeight: '700', marginBottom: 'var(--space-1)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              ОШИБКА СОХРАНЕНИЯ
+            </div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.9, color: 'var(--text-secondary)' }}>
+              Попробуйте еще раз
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </>
   )
 }

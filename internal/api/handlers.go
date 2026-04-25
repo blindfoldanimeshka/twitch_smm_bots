@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 )
 
@@ -35,9 +36,10 @@ type Handler struct {
 	settingsManager SettingsManager
 	store           *storage.Store
 	hub             *Hub
+	llmClient       *llm.Client
 }
 
-func NewHandler(manager BotManager, store *storage.Store, hub *Hub) *Handler {
+func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *llm.Client) *Handler {
 	var settingsManager SettingsManager
 	if sm, ok := manager.(SettingsManager); ok {
 		settingsManager = sm
@@ -48,6 +50,7 @@ func NewHandler(manager BotManager, store *storage.Store, hub *Hub) *Handler {
 		settingsManager: settingsManager,
 		store:           store,
 		hub:             hub,
+		llmClient:       llmClient,
 	}
 }
 
@@ -440,4 +443,32 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
+	if h.llmClient == nil {
+		respondJSON(w, map[string]interface{}{
+			"available": false,
+			"error":     "LLM client not initialized",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	err := h.llmClient.HealthCheck(ctx)
+	available := err == nil
+	provider := h.llmClient.GetProvider()
+
+	response := map[string]interface{}{
+		"available": available,
+		"provider":  provider,
+	}
+
+	if err != nil {
+		response["error"] = err.Error()
+	}
+
+	respondJSON(w, response)
 }

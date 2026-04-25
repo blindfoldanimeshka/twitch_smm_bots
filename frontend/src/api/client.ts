@@ -66,7 +66,19 @@ export interface Settings {
   audio_enabled: boolean;
   rotation_enabled: boolean;
   rotation_interval: number;
+  llm_provider: string;
+  llm_api_url: string;
+  llm_model: string;
+  llm_api_key: string;
   updated_at: string;
+}
+
+export interface LLMStatus {
+  provider: string;
+  available: boolean;
+  error?: string;
+  model: string;
+  url: string;
 }
 
 const client = axios.create({
@@ -76,6 +88,40 @@ const client = axios.create({
     'X-API-Key': config.apiKey,
   },
 });
+
+// Логирование запросов
+client.interceptors.request.use(
+  (config) => {
+    console.log(`🌐 [API REQUEST] ${config.method?.toUpperCase()} ${config.url}`, {
+      data: config.data,
+      headers: config.headers,
+    });
+    return config;
+  },
+  (error) => {
+    console.error('❌ [API REQUEST ERROR]', error);
+    return Promise.reject(error);
+  }
+);
+
+// Логирование ответов
+client.interceptors.response.use(
+  (response) => {
+    console.log(`✅ [API RESPONSE] ${response.config.method?.toUpperCase()} ${response.config.url}`, {
+      status: response.status,
+      data: response.data,
+    });
+    return response;
+  },
+  (error) => {
+    console.error(`❌ [API ERROR] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
+    return Promise.reject(error);
+  }
+);
 
 export const api = {
   // Bots
@@ -100,4 +146,7 @@ export const api = {
   // Settings
   getSettings: () => client.get<Settings>('/api/settings'),
   updateSettings: (data: Settings) => client.post('/api/settings', data),
+
+  // LLM Status
+  getLLMStatus: () => client.get<LLMStatus>('/api/llm/status'),
 };

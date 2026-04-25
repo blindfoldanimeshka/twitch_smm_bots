@@ -86,3 +86,11 @@ type BotMessagePayload struct {
 	Personality string    `json:"personality"`
 	Timestamp   time.Time `json:"timestamp"`
 }
+
+type LLMStatusDTO struct {
+	Provider  string `json:"provider"`
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"`
+	Model     string `json:"model"`
+	URL       string `json:"url"`
+}

@@ -37,10 +37,30 @@ export default function Bots() {
   })
 
   const createBotMutation = useMutation({
-    mutationFn: (data: BotFormData) => api.createBot(data),
-    onSuccess: () => {
+    mutationFn: async (data: BotFormData) => {
+      console.log('🚀 [CREATE BOT] Отправка запроса:', data)
+      try {
+        const response = await api.createBot(data)
+        console.log('✅ [CREATE BOT] Успешный ответ:', response)
+        return response
+      } catch (error: any) {
+        console.error('❌ [CREATE BOT] Ошибка:', error)
+        console.error('❌ [CREATE BOT] Детали ошибки:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+        })
+        throw error
+      }
+    },
+    onSuccess: (data) => {
+      console.log('✅ [CREATE BOT] onSuccess вызван, данные:', data)
       queryClient.invalidateQueries({ queryKey: ['bots'] })
       resetForm()
+    },
+    onError: (error: any) => {
+      console.error('❌ [CREATE BOT] onError вызван:', error)
+      alert(`Ошибка создания бота: ${error.response?.data?.error || error.message}`)
     },
   })
 
@@ -77,9 +97,15 @@ export default function Bots() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    console.log('📝 [FORM SUBMIT] Форма отправлена')
+    console.log('📝 [FORM SUBMIT] Данные формы:', formData)
+    console.log('📝 [FORM SUBMIT] Режим редактирования:', editingBot ? 'Да' : 'Нет')
+
     if (editingBot) {
+      console.log('✏️ [UPDATE BOT] Обновление бота:', editingBot)
       updateBotMutation.mutate({ id: editingBot, data: formData })
     } else {
+      console.log('➕ [CREATE BOT] Создание нового бота')
       createBotMutation.mutate(formData)
     }
   }
@@ -108,26 +134,26 @@ export default function Bots() {
   return (
     <>
       <header className="hero">
-        <h1 className="hero__title">Управление аккаунтами ботов</h1>
+        <h1 className="hero__title">УПРАВЛЕНИЕ АККАУНТАМИ</h1>
         <p className="hero__lead">
-          Добавляйте, редактируйте и удаляйте аккаунты ботов. Для каждого бота укажите Twitch логин, OAuth токен и настройки поведения.
+          Добавляйте, редактируйте и удаляйте аккаунты ботов. Для каждого бота укажите Twitch логин, пароль и настройки поведения.
         </p>
       </header>
 
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2>Список ботов ({bots.length})</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
+          <h2>СПИСОК БОТОВ ({bots.length})</h2>
           <button
             className="btn primary"
             onClick={() => setShowForm(!showForm)}
           >
-            {showForm ? 'Отменить' : '+ Добавить бота'}
+            {showForm ? '✕ ОТМЕНИТЬ' : '+ ДОБАВИТЬ БОТА'}
           </button>
         </div>
 
         {showForm && (
-          <form onSubmit={handleSubmit} style={{ marginBottom: '2rem', padding: '1.5rem', background: 'var(--color-bg)', borderRadius: 'var(--radius)' }}>
-            <h3>{editingBot ? 'Редактировать бота' : 'Новый бот'}</h3>
+          <form onSubmit={handleSubmit} style={{ marginBottom: 'var(--space-8)', padding: 'var(--space-6)', background: 'var(--bg-base)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)' }}>
+            <h3>{editingBot ? 'РЕДАКТИРОВАТЬ БОТА' : 'НОВЫЙ БОТ'}</h3>
 
             <div className="field-grid">
               <div className="field">
@@ -237,10 +263,10 @@ export default function Bots() {
 
             <div className="form-actions">
               <button type="submit" className="btn primary">
-                {editingBot ? 'Сохранить изменения' : 'Создать бота'}
+                {editingBot ? '💾 СОХРАНИТЬ' : '+ СОЗДАТЬ БОТА'}
               </button>
               <button type="button" className="btn ghost" onClick={resetForm}>
-                Отменить
+                ✕ ОТМЕНИТЬ
               </button>
             </div>
           </form>
@@ -252,18 +278,18 @@ export default function Bots() {
               <div className="bot-card__header">
                 <div>
                   <div className="bot-card__title">{bot.name}</div>
-                  <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>@{bot.twitch_login}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
                 </div>
                 <span className={`bot-card__status bot-card__status--${bot.status}`}>
-                  {bot.status === 'running' ? 'Работает' : 'Остановлен'}
+                  {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
                 </span>
               </div>
 
               <div className="bot-card__info">
                 <div>ID: <code>{bot.id}</code></div>
-                <div>Личность: {bot.personality}</div>
-                <div>Задержка: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
-                <div>Лимит: {bot.rate_limit_per_min} сообщ/мин</div>
+                <div>ЛИЧНОСТЬ: {bot.personality}</div>
+                <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
+                <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
               </div>
 
               <div className="bot-card__actions">
@@ -271,13 +297,13 @@ export default function Bots() {
                   className="btn ghost"
                   onClick={() => handleEdit(bot)}
                 >
-                  Редактировать
+                  ✎ РЕДАКТИРОВАТЬ
                 </button>
                 <button
                   className="btn danger"
                   onClick={() => handleDelete(bot.id)}
                 >
-                  Удалить
+                  ✕ УДАЛИТЬ
                 </button>
               </div>
             </div>
@@ -285,8 +311,10 @@ export default function Bots() {
         </div>
 
         {bots.length === 0 && !showForm && (
-          <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
-            <p>Нет ботов. Добавьте первого бота для начала работы.</p>
+          <div style={{ textAlign: 'center', padding: 'var(--space-12)', color: 'var(--text-muted)' }}>
+            <p style={{ fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              НЕТ БОТОВ. ДОБАВЬТЕ ПЕРВОГО БОТА ДЛЯ НАЧАЛА РАБОТЫ.
+            </p>
           </div>
         )}
       </div>

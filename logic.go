@@ -42,20 +42,28 @@ type promptPair struct {
 	user   string
 }
 
+// Personality constants
+const (
+	PersonalityCheerful = "веселый_фанат"
+	PersonalityToxic    = "токсик"
+	PersonalityNeutral  = "нейтрал"
+	PersonalityHyper    = "хайпер"
+)
+
 var personalities = map[string]promptPair{
-	"веселый_фанат": {
+	PersonalityCheerful: {
 		system: "Ты весёлый фанат стримера. Пишешь короткие сообщения в чат Twitch (макс 60 символов). Без эмодзи. Естественный тон.",
 		user:   "Напиши позитивный комментарий стримеру или в чат. Максимально коротко.",
 	},
-	"токсик": {
+	PersonalityToxic: {
 		system: "Ты провокатор в чате. Пишешь короткие (макс 50 символов) провокационные, но не оскорбительные сообщения.",
 		user:   "Напиши что-то чтобы спровоцировать дискуссию в чате. Коротко.",
 	},
-	"нейтрал": {
+	PersonalityNeutral: {
 		system: "Ты обычный зритель Twitch. Пишешь короткие вопросы или комментарии (макс 55 символов). Естественно.",
 		user:   "Напиши вопрос стримеру или комментарий к происходящему. Коротко.",
 	},
-	"хайпер": {
+	PersonalityHyper: {
 		system: "Ты хайповый подписчик. Пишешь энергичные короткие сообщения (макс 50 символов). Используешь сленг.",
 		user:   "Напиши что-то энергичное в чат. Коротко, с энтузиазмом.",
 	},
@@ -104,6 +112,13 @@ func (l *globalLimiter) allow(now time.Time) bool {
 	}
 	if idx > 0 {
 		l.events = append([]time.Time(nil), l.events[idx:]...)
+	}
+
+	// Prevent unbounded growth
+	const maxEvents = 10000
+	if len(l.events) >= maxEvents {
+		log.Printf("rate limiter memory limit reached, dropping oldest events")
+		l.events = l.events[len(l.events)-maxEvents/2:]
 	}
 
 	if len(l.events) >= l.limit {
@@ -408,17 +423,6 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			consecutiveErrors = 0
 		}
 
-		if err := br.client.Connect(); err != nil {
-			log.Printf("[%s] twitch connect error: %v", br.cfg.ID, err)
-			consecutiveErrors++
-			if consecutiveErrors >= maxConsecutiveErrors {
-				log.Printf("[%s] too many errors, stopping bot", br.cfg.ID)
-				return
-			}
-			time.Sleep(errorRetryDelay)
-			continue
-		}
-
 		interval := minInterval(br.cfg.RateLimitPerMin)
 		if !br.lastSent.IsZero() {
 			nextAllowed := br.lastSent.Add(interval)
@@ -484,7 +488,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 func (bm *botManager) generateMessage(ctx context.Context, personality string) (string, error) {
 	p, ok := personalities[personality]
 	if !ok {
-		p = personalities["нейтрал"]
+		p = personalities[PersonalityNeutral]
 	}
 
 	userPrompt := p.user
@@ -503,6 +507,11 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 
 	llmCtx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
+
+	// Проверка доступности LLM перед генерацией
+	if bm.llmClient == nil {
+		return "", fmt.Errorf("LLM client not initialized")
+	}
 
 	msg, err := bm.llmClient.Generate(llmCtx, p.system, userPrompt, llmMaxTokens)
 	if err != nil {
@@ -616,6 +625,37 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	baseCtx := bm.runtimeCtx
 	if baseCtx == nil {
 		baseCtx = context.Background()
+	}
+
+	// Пересоздать LLM клиент если настройки изменились
+	if settings.LLMProvider != "" && settings.LLMApiURL != "" {
+		log.Printf("[LLM] Initializing client: provider=%s, model=%s, url=%s",
+			settings.LLMProvider, settings.LLMModel, settings.LLMApiURL)
+
+		newClient := llm.NewClient(
+			settings.LLMApiURL,
+			settings.LLMModel,
+			settings.LLMApiKey,
+			settings.LLMProvider,
+		)
+
+		// Проверка доступности нового клиента
+		healthCtx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
+		if err := newClient.HealthCheck(healthCtx); err != nil {
+			cancel()
+			log.Printf("[LLM] Health check failed: %v", err)
+			if settings.LLMProvider == "lmstudio" {
+				log.Printf("[LLM] Make sure LM Studio is running on %s with a model loaded", settings.LLMApiURL)
+			}
+		} else {
+			cancel()
+			log.Printf("[LLM] Client ready: provider=%s, model=%s",
+				settings.LLMProvider, settings.LLMModel)
+		}
+
+		bm.mu.Lock()
+		bm.llmClient = newClient
+		bm.mu.Unlock()
 	}
 
 	primaryChannel := primaryChannelFromSettings(settings, bm.channel)
@@ -807,10 +847,10 @@ func main() {
 	llmURL := env("LLM_API_URL", env("LMSTUDIO_URL", "http://127.0.0.1:1234/v1"))
 	llmModel := env("LLM_MODEL", env("LMSTUDIO_MODEL", "local-model"))
 	llmAPIKey := env("LLM_API_KEY", "")
-	llmProvider := env("LLM_PROVIDER", "lmstudio") // lmstudio, omniroute, openai, custom
+	llmProvider := env("LLM_PROVIDER", "lmstudio") // lmstudio (единственный поддерживаемый провайдер)
 
 	// Database & Cache
-	databaseURL := env("DATABASE_URL", "postgres://botfarm:botfarm@localhost:5432/twitch_bot_farm?sslmode=disable")
+	databaseURL := env("DATABASE_URL", "postgres://botfarm:botfarm@localhost:5432/botfarm?sslmode=disable")
 	redisURL := env("REDIS_URL", "redis://localhost:6379")
 
 	// Twitch & API
@@ -847,10 +887,12 @@ func main() {
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	if err := llmClient.HealthCheck(healthCtx); err != nil {
 		healthCancel()
-		log.Fatalf("LLM API (%s) is not reachable: %v", llmProvider, err)
+		log.Printf("Warning: LLM API (%s) is not reachable: %v", llmProvider, err)
+		log.Printf("Backend will start anyway. Configure LLM settings in UI.")
+	} else {
+		healthCancel()
+		log.Printf("LLM API OK (provider: %s, url: %s, model: %s)", llmProvider, llmURL, llmModel)
 	}
-	healthCancel()
-	log.Printf("LLM API OK (provider: %s, url: %s, model: %s)", llmProvider, llmURL, llmModel)
 
 	var cacheClient *cache.Client
 	if redisURL != "" {
@@ -901,7 +943,7 @@ func main() {
 		log.Printf("no bots found in database; add rows into table bots first")
 	}
 
-	apiServer := api.NewServer(manager, store, apiKey, apiPort, corsOrigins)
+	apiServer := api.NewServer(manager, store, llmClient, apiKey, apiPort, corsOrigins)
 	manager.setAPIHub(apiServer.Hub())
 
 	go func() {

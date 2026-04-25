@@ -1,0 +1,6 @@
+-- Add LLM provider settings to settings table
+ALTER TABLE settings
+ADD COLUMN IF NOT EXISTS llm_provider TEXT NOT NULL DEFAULT 'lmstudio',
+ADD COLUMN IF NOT EXISTS llm_api_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:1234/v1',
+ADD COLUMN IF NOT EXISTS llm_model TEXT NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS llm_api_key TEXT NOT NULL DEFAULT '';

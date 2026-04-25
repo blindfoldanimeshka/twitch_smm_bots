@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
+	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 )
 
@@ -20,9 +21,9 @@ type Server struct {
 	corsOrigins []string
 }
 
-func NewServer(manager BotManager, store *storage.Store, apiKey string, port int, corsOrigins []string) *Server {
+func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, apiKey string, port int, corsOrigins []string) *Server {
 	hub := NewHub()
-	handler := NewHandler(manager, store, hub)
+	handler := NewHandler(manager, store, hub, llmClient)
 
 	s := &Server{
 		handler:     handler,
@@ -43,6 +44,7 @@ func NewServer(manager BotManager, store *storage.Store, apiKey string, port int
 	api.Use(LoggingMiddleware)
 
 	api.HandleFunc("/health", handler.HealthCheck).Methods("GET")
+	api.HandleFunc("/llm/status", handler.GetLLMStatus).Methods("GET")
 	api.HandleFunc("/bots", handler.ListBots).Methods("GET")
 	api.HandleFunc("/bots", handler.CreateBot).Methods("POST")
 	api.HandleFunc("/bots/{id}", handler.GetBot).Methods("GET")

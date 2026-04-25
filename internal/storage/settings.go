@@ -9,16 +9,20 @@ import (
 
 // Settings represents global system settings
 type Settings struct {
-	ID               string   `json:"id"`
-	Channels         []string `json:"channels"`
-	DebugMode        bool     `json:"debug_mode"`
-	DebugChannel     string   `json:"debug_channel"`
-	PositivePrompt   string   `json:"positive_prompt"`
-	NegativePrompt   string   `json:"negative_prompt"`
-	MaxTokens        int      `json:"max_tokens"`
-	AudioEnabled     bool     `json:"audio_enabled"`
-	RotationEnabled  bool     `json:"rotation_enabled"`
-	RotationInterval int      `json:"rotation_interval"` // minutes
+	ID               string    `json:"id"`
+	Channels         []string  `json:"channels"`
+	DebugMode        bool      `json:"debug_mode"`
+	DebugChannel     string    `json:"debug_channel"`
+	PositivePrompt   string    `json:"positive_prompt"`
+	NegativePrompt   string    `json:"negative_prompt"`
+	MaxTokens        int       `json:"max_tokens"`
+	AudioEnabled     bool      `json:"audio_enabled"`
+	RotationEnabled  bool      `json:"rotation_enabled"`
+	RotationInterval int       `json:"rotation_interval"` // minutes
+	LLMProvider      string    `json:"llm_provider"`
+	LLMApiURL        string    `json:"llm_api_url"`
+	LLMModel         string    `json:"llm_model"`
+	LLMApiKey        string    `json:"llm_api_key"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
@@ -34,6 +38,10 @@ CREATE TABLE IF NOT EXISTS settings (
     audio_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_interval INT NOT NULL DEFAULT 60,
+    llm_provider TEXT NOT NULL DEFAULT 'lmstudio',
+    llm_api_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:1234/v1',
+    llm_model TEXT NOT NULL DEFAULT '',
+    llm_api_key TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -57,7 +65,8 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, channels, debug_mode, debug_channel, positive_prompt, negative_prompt,
-		       max_tokens, audio_enabled, rotation_enabled, rotation_interval, updated_at
+		       max_tokens, audio_enabled, rotation_enabled, rotation_interval,
+		       llm_provider, llm_api_url, llm_model, llm_api_key, updated_at
 		FROM settings WHERE id = 'default'
 	`).Scan(
 		&settings.ID,
@@ -70,6 +79,10 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 		&settings.AudioEnabled,
 		&settings.RotationEnabled,
 		&settings.RotationInterval,
+		&settings.LLMProvider,
+		&settings.LLMApiURL,
+		&settings.LLMModel,
+		&settings.LLMApiKey,
 		&settings.UpdatedAt,
 	)
 	if err != nil {
@@ -103,6 +116,10 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 			audio_enabled = $7,
 			rotation_enabled = $8,
 			rotation_interval = $9,
+			llm_provider = $10,
+			llm_api_url = $11,
+			llm_model = $12,
+			llm_api_key = $13,
 			updated_at = NOW()
 		WHERE id = 'default'
 	`,
@@ -115,6 +132,10 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 		settings.AudioEnabled,
 		settings.RotationEnabled,
 		settings.RotationInterval,
+		settings.LLMProvider,
+		settings.LLMApiURL,
+		settings.LLMModel,
+		settings.LLMApiKey,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)

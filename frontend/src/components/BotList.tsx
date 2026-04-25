@@ -13,20 +13,22 @@ interface BotListProps {
 export const BotList = ({ bots, onStart, onStop, onDelete, onStartAll, onStopAll }: BotListProps) => {
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h2>Активные боты ({bots.length})</h2>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
+        <h2>АКТИВНЫЕ БОТЫ ({bots.length})</h2>
+        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
           <button onClick={onStartAll} className="btn primary">
-            Запустить всех
+            ▶ ЗАПУСТИТЬ ВСЕХ
           </button>
           <button onClick={onStopAll} className="btn danger">
-            Остановить всех
+            ■ ОСТАНОВИТЬ ВСЕХ
           </button>
         </div>
       </div>
       {bots.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
-          Нет ботов. Добавьте ботов в разделе "Боты".
+        <div style={{ textAlign: 'center', padding: 'var(--space-12)', color: 'var(--text-muted)' }}>
+          <p style={{ fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            НЕТ БОТОВ. ДОБАВЬТЕ БОТОВ В РАЗДЕЛЕ "БОТЫ".
+          </p>
         </div>
       ) : (
         <div className="bot-list">

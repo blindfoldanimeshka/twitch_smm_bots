@@ -1,6 +1,7 @@
 import React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Navigation from './components/Navigation'
+import { StatusBar } from './components/StatusBar'
 import Dashboard from './pages/Dashboard'
 import Bots from './pages/Bots'
 import Settings from './pages/Settings'
@@ -24,6 +25,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <div className="app">
         <Navigation currentPage={currentPage} onNavigate={setCurrentPage as (page: string) => void} />
+        <StatusBar onNavigateToSettings={() => setCurrentPage('settings')} />
         <main className="page">
           {currentPage === 'dashboard' && <Dashboard />}
           {currentPage === 'bots' && <Bots />}

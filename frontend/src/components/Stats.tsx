@@ -9,26 +9,26 @@ export const StatsComponent = ({ stats, wsConnected }: StatsProps) => {
   return (
     <div className="stats-grid">
       <div className="stat-card">
-        <div className="stat-card__label">Всего ботов</div>
+        <div className="stat-card__label">ВСЕГО БОТОВ</div>
         <div className="stat-card__value">{stats?.total_bots || 0}</div>
       </div>
       <div className="stat-card">
-        <div className="stat-card__label">Работает</div>
-        <div className="stat-card__value" style={{ color: 'var(--color-success)' }}>
+        <div className="stat-card__label">РАБОТАЕТ</div>
+        <div className="stat-card__value" style={{ color: 'var(--state-success)' }}>
           {stats?.running_bots || 0}
         </div>
       </div>
       <div className="stat-card">
-        <div className="stat-card__label">Сообщений/мин</div>
-        <div className="stat-card__value" style={{ color: 'var(--color-primary)' }}>
+        <div className="stat-card__label">СООБЩЕНИЙ/МИН</div>
+        <div className="stat-card__value" style={{ color: 'var(--accent-cyan)' }}>
           {stats?.messages_per_min || 0}
         </div>
       </div>
       <div className="stat-card">
-        <div className="stat-card__label">WebSocket</div>
+        <div className="stat-card__label">WEBSOCKET</div>
         <div className={`ws-status ${wsConnected ? 'ws-status--connected' : ''}`}>
           <span className="ws-status__dot"></span>
-          <span>{wsConnected ? 'Подключен' : 'Отключен'}</span>
+          <span>{wsConnected ? 'ПОДКЛЮЧЕН' : 'ОТКЛЮЧЕН'}</span>
         </div>
       </div>
     </div>

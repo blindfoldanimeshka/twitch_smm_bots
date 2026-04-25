@@ -1,0 +1,223 @@
+{
+  "profile_name": "snake-on-the-throne-neon-grid-v1",
+  "profile_version": "1.0.0",
+  "target_model": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4.5",
+    "mode": "design-system-profile"
+  },
+  "brand": {
+    "name": "Twitch SMM Bot Farm",
+    "core_style": "retro-arcade cyber grid",
+    "keywords": [
+      "neon green",
+      "dark navy",
+      "grid",
+      "pixel accents",
+      "high contrast",
+      "game economy dashboard"
+    ],
+    "tone": "techno, confident, tactical"
+  },
+  "foundations": {
+    "colors": {
+      "background": {
+        "base": "#010B2A",
+        "surface": "#061038",
+        "elevated": "#0A1644"
+      },
+      "primary": {
+        "500": "#39FF6A",
+        "600": "#23E153",
+        "700": "#15B844"
+      },
+      "accent": {
+        "lime": "#72FF8D",
+        "cyan": "#55E7FF"
+      },
+      "text": {
+        "primary": "#EAFBF1",
+        "secondary": "#A9C7B5",
+        "muted": "#6F8A7A",
+        "inverse": "#010B2A"
+      },
+      "state": {
+        "success": "#39FF6A",
+        "warning": "#FFD24D",
+        "error": "#FF4D6D",
+        "info": "#55E7FF"
+      },
+      "borders": {
+        "default": "#1B365F",
+        "strong": "#39FF6A",
+        "subtle": "#113059"
+      },
+      "effects": {
+        "neon_glow": "0 0 8px rgba(57,255,106,0.55), 0 0 24px rgba(57,255,106,0.25)",
+        "neon_glow_soft": "0 0 6px rgba(57,255,106,0.35)"
+      }
+    },
+    "typography": {
+      "font_family": {
+        "display": "'Orbitron', 'Rajdhani', sans-serif",
+        "body": "'Inter', 'Roboto', sans-serif",
+        "mono": "'JetBrains Mono', monospace"
+      },
+      "scale": {
+        "xs": 12,
+        "sm": 14,
+        "md": 16,
+        "lg": 20,
+        "xl": 28,
+        "2xl": 36
+      },
+      "weights": {
+        "regular": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700
+      },
+      "letter_spacing": {
+        "tight": "-0.01em",
+        "normal": "0em",
+        "wide": "0.04em",
+        "ui_caps": "0.08em"
+      }
+    },
+    "spacing": {
+      "unit": 4,
+      "scale": {
+        "1": 4,
+        "2": 8,
+        "3": 12,
+        "4": 16,
+        "5": 20,
+        "6": 24,
+        "8": 32,
+        "10": 40,
+        "12": 48,
+        "16": 64
+      }
+    },
+    "radius": {
+      "none": 0,
+      "sm": 4,
+      "md": 8,
+      "lg": 12
+    },
+    "grid": {
+      "base_columns": 12,
+      "gutter": 16,
+      "container_max_width": 1200,
+      "visual_overlay": {
+        "enabled": true,
+        "cell_size": 20,
+        "line_color": "rgba(57,255,106,0.12)"
+      }
+    }
+  },
+  "components": {
+    "card": {
+      "background": "#061038",
+      "border": "1px solid #39FF6A",
+      "title_style": "display uppercase",
+      "padding": 24,
+      "effects": [
+        "corner-pixel-decoration",
+        "subtle-grid-overlay"
+      ]
+    },
+    "button": {
+      "height": 44,
+      "padding_x": 16,
+      "font": "body semibold",
+      "variants": {
+        "primary": {
+          "bg": "#39FF6A",
+          "text": "#010B2A",
+          "border": "#39FF6A",
+          "hover_bg": "#23E153"
+        },
+        "secondary": {
+          "bg": "transparent",
+          "text": "#39FF6A",
+          "border": "#39FF6A",
+          "hover_bg": "rgba(57,255,106,0.08)"
+        }
+      }
+    },
+    "table": {
+      "header_bg": "#0A1644",
+      "row_divider": "#113059",
+      "header_text": "#72FF8D",
+      "cell_text": "#EAFBF1",
+      "numeric_alignment": "right"
+    },
+    "badge": {
+      "shape": "rect",
+      "radius": 4,
+      "padding": "4 8",
+      "variants": {
+        "success": "#39FF6A",
+        "warning": "#FFD24D",
+        "error": "#FF4D6D",
+        "neutral": "#1B365F"
+      }
+    }
+  },
+  "interaction": {
+    "motion": {
+      "duration_fast_ms": 120,
+      "duration_base_ms": 180,
+      "duration_slow_ms": 260,
+      "easing": "cubic-bezier(0.2, 0.8, 0.2, 1)"
+    },
+    "hover": {
+      "lift_px": 1,
+      "glow": true,
+      "border_brighten": true
+    },
+    "focus": {
+      "ring_color": "#55E7FF",
+      "ring_width": 2,
+      "ring_offset": 2
+    }
+  },
+  "content_rules": {
+    "headings": "uppercase for dashboard sections",
+    "numbers": "tabular style where possible",
+    "language": "ru",
+    "density": "compact",
+    "readability_min_contrast": 4.5
+  },
+  "claude_profile": {
+    "system_intent": "Generate consistent UI and content in dark neon game-economy style.",
+    "generation_rules": [
+      "Preserve dark navy background and neon green hierarchy.",
+      "Use card-based composition with clear bordered sections.",
+      "Prefer concise labels and dashboard-like data presentation.",
+      "Keep visuals high-contrast and legible on low-light displays.",
+      "Use pixel or grid accents sparingly to avoid visual noise."
+    ],
+    "do": [
+      "Use semantic tokens from this profile, not raw colors.",
+      "Prioritize information architecture before decoration.",
+      "Keep layout modular and reusable."
+    ],
+    "dont": [
+      "Do not use pastel palettes.",
+      "Do not apply heavy blur/glass effects.",
+      "Do not mix many accent colors in one screen."
+    ],
+    "output_contract": {
+      "format": "json-first",
+      "fallback": "minimal-markdown",
+      "required_sections": [
+        "foundations",
+        "components",
+        "interaction",
+        "content_rules"
+      ]
+    }
+  }
+}

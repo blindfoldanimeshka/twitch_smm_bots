@@ -36,6 +36,7 @@ Thumbs.db
 
 # AI Assistant directories (should not be in git)
 .agent/
+.agent/skills/ui-ux-pro-max/
 .claude/
 .cursor/
 .windsurf/

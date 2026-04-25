@@ -9,15 +9,10 @@
 ### 1. Установите Docker
 Скачайте [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
-### 2. Получите LLM API ключ
+### 2. Установите LM Studio
 
-**Вариант A: OpenRouter (рекомендуется, бесплатные модели)**
-- Регистрация: https://openrouter.ai/keys
-- Создайте API ключ (бесплатно)
-
-**Вариант B: LM Studio (локально)**
 - Скачайте [LM Studio](https://lmstudio.ai/)
-- Загрузите модель (Llama 3.1 8B)
+- Загрузите модель (например, Google Gemma 3 4B или Llama 3.2 3B)
 - Запустите Local Server на порту 1234
 
 ### 3. Настройте проект
@@ -29,21 +24,11 @@ copy .env.example .env
 
 Откройте `.env` и настройте:
 
-**Для OpenRouter:**
-```env
-API_KEY=secret-key-12345
-LLM_PROVIDER=openrouter
-LLM_API_URL=https://openrouter.ai/api/v1
-LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
-LLM_API_KEY=sk-or-v1-ваш-ключ
-```
-
-**Для LM Studio:**
 ```env
 API_KEY=secret-key-12345
 LLM_PROVIDER=lmstudio
-LLM_API_URL=http://host.docker.internal:1234/v1
-LLM_MODEL=local-model
+LLM_API_URL=http://127.0.0.1:1234/v1
+LLM_MODEL=google/gemma-3-4b
 ```
 
 ### 4. Запустите проект
@@ -92,10 +77,7 @@ docker compose up -d --build
 
 ## 💡 Поддерживаемые LLM
 
-- **OpenRouter** — 100+ моделей, есть бесплатные (Llama 3.1, Gemini Flash, Mistral)
-- **LM Studio** — локально, бесплатно
-- **OpenAI** — GPT-4, GPT-3.5
-- **Omniroute** — балансировка нагрузки
+- **LM Studio** — локально, бесплатно, автоматическая инициализация моделей
 
 ---
 

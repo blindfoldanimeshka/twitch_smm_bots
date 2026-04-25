@@ -24,7 +24,7 @@ services:
     container_name: twitch-bot-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: twitch_bot_farm
+      POSTGRES_DB: botfarm
       POSTGRES_USER: botfarm
       POSTGRES_PASSWORD: botfarm
     ports:
@@ -68,7 +68,7 @@ services:
       - LLM_API_URL=${LLM_API_URL:-http://host.docker.internal:1234/v1}
       - LLM_MODEL=${LLM_MODEL:-local-model}
       - LLM_API_KEY=${LLM_API_KEY:-}
-      - DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/twitch_bot_farm?sslmode=disable
+      - DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - API_PORT=8080
       - API_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -99,16 +99,16 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:8080
+        - VITE_WS_URL=ws://localhost:8080
+        - VITE_API_KEY=secret-api-key-12345
     container_name: twitch-bot-frontend
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       - backend
-    environment:
-      - VITE_API_URL=http://localhost:8080
-      - VITE_WS_URL=ws://localhost:8080
-      - VITE_API_KEY=${API_KEY:-secret-api-key-12345}
 
   pgadmin:
     image: dpage/pgadmin4:8
