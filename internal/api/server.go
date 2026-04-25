@@ -67,6 +67,7 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
 		AllowCredentials: true,
+		Debug:            true,
 	})
 
 	s.httpServer = &http.Server{
