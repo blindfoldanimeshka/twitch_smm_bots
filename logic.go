@@ -200,6 +200,38 @@ func (bm *botManager) setAPIHub(hub *api.Hub) {
 	bm.apiHub = hub
 }
 
+func (bm *botManager) logBotEvent(botID, logType, level, message string, contextData map[string]interface{}) {
+	log := storage.BotLog{
+		BotID:     botID,
+		LogType:   logType,
+		Level:     level,
+		Message:   message,
+		Context:   contextData,
+		CreatedAt: time.Now(),
+	}
+
+	// Write to PostgreSQL (async, don't block bot loop)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = bm.store.CreateBotLog(ctx, log)
+	}()
+
+	// Write to Redis cache (async)
+	if bm.cacheClient != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			_ = bm.cacheClient.AddBotLog(ctx, botID, log)
+		}()
+	}
+
+	// Broadcast via WebSocket (immediate)
+	if bm.apiHub != nil {
+		bm.apiHub.BroadcastBotLog(botID, log)
+	}
+}
+
 func (bm *botManager) loadBots(ctx context.Context) error {
 	cfgs, err := bm.store.ListBots(ctx)
 	if err != nil {
@@ -386,7 +418,12 @@ func (bm *botManager) statusLines() []string {
 
 func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 	log.Printf("[%s] started", br.cfg.ID)
-	defer log.Printf("[%s] stopped", br.cfg.ID)
+	bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot started", nil)
+
+	defer func() {
+		log.Printf("[%s] stopped", br.cfg.ID)
+		bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot stopped", nil)
+	}()
 
 	consecutiveErrors := 0
 
@@ -409,6 +446,8 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		// Проверка и переподключение IRC если нужно
 		if !br.client.IsConnected() {
 			log.Printf("[%s] IRC disconnected, reconnecting...", br.cfg.ID)
+			bm.logBotEvent(br.cfg.ID, "error", "warning", "IRC disconnected, reconnecting...", nil)
+
 			if err := br.client.Reconnect(); err != nil {
 				log.Printf("[%s] reconnect failed: %v", br.cfg.ID, err)
 				consecutiveErrors++
@@ -420,6 +459,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				continue
 			}
 			log.Printf("[%s] reconnected successfully", br.cfg.ID)
+			bm.logBotEvent(br.cfg.ID, "lifecycle", "success", "Reconnected successfully", nil)
 			consecutiveErrors = 0
 		}
 
@@ -440,12 +480,17 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		now := time.Now()
 		if !bm.globalLimiter.allow(now) {
 			log.Printf("[%s] global limit reached, skip", br.cfg.ID)
+			bm.logBotEvent(br.cfg.ID, "rate_limit", "warning", "Global rate limit reached", nil)
 			continue
 		}
 
 		msg, err := bm.generateMessage(ctx, br.cfg.Personality)
 		if err != nil {
 			log.Printf("[%s] llm error: %v", br.cfg.ID, err)
+			bm.logBotEvent(br.cfg.ID, "llm", "error", "LLM generation failed", map[string]interface{}{
+				"error":       err.Error(),
+				"personality": br.cfg.Personality,
+			})
 			consecutiveErrors++
 			if consecutiveErrors >= maxConsecutiveErrors {
 				log.Printf("[%s] too many LLM errors, stopping bot", br.cfg.ID)
@@ -469,6 +514,11 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		consecutiveErrors = 0
 		br.lastSent = now
 		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
+
+		bm.logBotEvent(br.cfg.ID, "message", "success", msg, map[string]interface{}{
+			"personality": br.cfg.Personality,
+			"channel":     normalizeChannelName(br.cfg.CurrentChannel),
+		})
 
 		if bm.cacheClient != nil {
 			// Используем родительский контекст с таймаутом вместо Background
