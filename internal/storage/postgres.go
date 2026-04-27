@@ -65,6 +65,29 @@ CREATE TRIGGER bots_set_updated_at
     BEFORE UPDATE ON bots
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS bot_logs (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    log_type TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    context JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_logs_bot_id_created ON bot_logs(bot_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bot_logs_created ON bot_logs(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS settings_logs (
+    id BIGSERIAL PRIMARY KEY,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    changes JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_settings_logs_created ON settings_logs(created_at DESC);
 `
 )
 
