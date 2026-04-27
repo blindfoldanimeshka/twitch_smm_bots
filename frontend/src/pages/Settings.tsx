@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type Settings as SettingsType } from '../api/client'
 import { GridBeam } from '../components/ui/grid-beam'
+import { SettingsLogPanel } from '../components/SettingsLogPanel'
 
 export default function Settings() {
   const queryClient = useQueryClient()
@@ -469,6 +470,9 @@ export default function Settings() {
           ↻ СБРОСИТЬ ИЗМЕНЕНИЯ
         </button>
       </div>
+
+      {/* Settings Log Panel */}
+      <SettingsLogPanel maxHeight={250} collapsed={true} />
 
       {/* Toast notifications */}
       {saveSuccess && (
