@@ -39,6 +39,7 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	go rateLimiter.Cleanup()
 
 	api := router.PathPrefix("/api").Subrouter()
+	api.Use(SecurityHeadersMiddleware)
 	api.Use(RateLimitMiddleware(rateLimiter))
 	api.Use(AuthMiddleware(apiKey))
 	api.Use(LoggingMiddleware)

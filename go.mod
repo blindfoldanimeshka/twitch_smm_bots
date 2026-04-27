@@ -2,7 +2,13 @@ module twitch-smm-bot
 
 go 1.26.1
 
-require github.com/jackc/pgx/v5 v5.9.1
+require (
+	github.com/gorilla/csrf v1.7.2
+	github.com/jackc/pgx/v5 v5.9.1
+	github.com/pkg/errors v0.9.1
+	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.31.0
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -15,6 +21,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0 // indirect
 	github.com/rs/cors v1.11.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )

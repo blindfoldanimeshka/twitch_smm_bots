@@ -233,6 +233,19 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 		return nil
 	}
 
+	// Whitelist разрешенных колонок для защиты от SQL injection
+	allowedColumns := map[string]bool{
+		"name":              true,
+		"personality":       true,
+		"min_delay_sec":     true,
+		"max_delay_sec":     true,
+		"rate_limit_per_min": true,
+		"enabled":           true,
+		"current_channel":   true,
+		"proxy_id":          true,
+		"auto_rotate_proxy": true,
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
 	defer cancel()
 
@@ -241,6 +254,11 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 	i := 1
 
 	for key, val := range updates {
+		// Проверяем, что колонка в whitelist
+		if !allowedColumns[key] {
+			return fmt.Errorf("invalid column name: %s", key)
+		}
+
 		if i > 1 {
 			query += ", "
 		}
