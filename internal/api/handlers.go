@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ type Handler struct {
 type CacheClient interface {
 	GetBotLogs(ctx context.Context, botID string, limit int) ([]storage.BotLog, error)
 	GetSettingsLogs(ctx context.Context, limit int) ([]storage.SettingsLog, error)
+	AddSettingsLog(ctx context.Context, log storage.SettingsLog) error
 }
 
 func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
@@ -430,6 +432,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var settings storage.Settings
 	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		h.logSettingsChange("error", "Invalid settings format", nil)
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
@@ -437,13 +440,21 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	oldSettings, _ := h.store.GetSettings(ctx)
+
 	if err := h.store.UpdateSettings(ctx, &settings); err != nil {
+		h.logSettingsChange("error", "Failed to save settings", nil)
 		http.Error(w, `{"error":"failed to update settings"}`, http.StatusInternalServerError)
 		return
 	}
 
+	changes := h.calculateSettingsChanges(oldSettings, &settings)
+	message := h.formatSettingsChangeMessage(changes)
+	h.logSettingsChange("success", message, changes)
+
 	if h.settingsManager != nil {
 		if err := h.settingsManager.ApplySettings(ctx, &settings); err != nil {
+			h.logSettingsChange("warning", "Settings saved but runtime apply failed: "+err.Error(), nil)
 			http.Error(w, `{"error":"settings saved but failed to apply at runtime"}`, http.StatusInternalServerError)
 			return
 		}
@@ -451,6 +462,150 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func (h *Handler) logSettingsChange(level, message string, changes map[string]interface{}) {
+	log := storage.SettingsLog{
+		Level:     level,
+		Message:   message,
+		Changes:   changes,
+		CreatedAt: time.Now(),
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = h.store.CreateSettingsLog(ctx, log)
+	}()
+
+	if h.cacheClient != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			_ = h.cacheClient.AddSettingsLog(ctx, log)
+		}()
+	}
+
+	if h.hub != nil {
+		h.hub.BroadcastSettingsLog(log)
+	}
+}
+
+func (h *Handler) calculateSettingsChanges(old, new *storage.Settings) map[string]interface{} {
+	changes := make(map[string]interface{})
+
+	if !reflect.DeepEqual(old.Channels, new.Channels) {
+		changes["channels"] = map[string]interface{}{
+			"old": old.Channels,
+			"new": new.Channels,
+		}
+	}
+
+	if old.LLMApiURL != new.LLMApiURL {
+		changes["llm_api_url"] = map[string]interface{}{
+			"old": old.LLMApiURL,
+			"new": new.LLMApiURL,
+		}
+	}
+
+	if old.LLMModel != new.LLMModel {
+		changes["llm_model"] = map[string]interface{}{
+			"old": old.LLMModel,
+			"new": new.LLMModel,
+		}
+	}
+
+	if old.AudioEnabled != new.AudioEnabled {
+		changes["audio_enabled"] = map[string]interface{}{
+			"old": old.AudioEnabled,
+			"new": new.AudioEnabled,
+		}
+	}
+
+	if old.RotationEnabled != new.RotationEnabled {
+		changes["rotation_enabled"] = map[string]interface{}{
+			"old": old.RotationEnabled,
+			"new": new.RotationEnabled,
+		}
+	}
+
+	if old.RotationInterval != new.RotationInterval {
+		changes["rotation_interval"] = map[string]interface{}{
+			"old": old.RotationInterval,
+			"new": new.RotationInterval,
+		}
+	}
+
+	if old.DebugMode != new.DebugMode {
+		changes["debug_mode"] = map[string]interface{}{
+			"old": old.DebugMode,
+			"new": new.DebugMode,
+		}
+	}
+
+	if old.PositivePrompt != new.PositivePrompt {
+		changes["positive_prompt"] = map[string]interface{}{
+			"old": old.PositivePrompt,
+			"new": new.PositivePrompt,
+		}
+	}
+
+	if old.NegativePrompt != new.NegativePrompt {
+		changes["negative_prompt"] = map[string]interface{}{
+			"old": old.NegativePrompt,
+			"new": new.NegativePrompt,
+		}
+	}
+
+	if old.MaxTokens != new.MaxTokens {
+		changes["max_tokens"] = map[string]interface{}{
+			"old": old.MaxTokens,
+			"new": new.MaxTokens,
+		}
+	}
+
+	return changes
+}
+
+func (h *Handler) formatSettingsChangeMessage(changes map[string]interface{}) string {
+	parts := []string{}
+
+	if _, ok := changes["channels"]; ok {
+		parts = append(parts, "Channels updated")
+	}
+	if _, ok := changes["llm_api_url"]; ok {
+		parts = append(parts, "LLM URL changed")
+	}
+	if _, ok := changes["llm_model"]; ok {
+		parts = append(parts, "LLM model changed")
+	}
+	if _, ok := changes["audio_enabled"]; ok {
+		parts = append(parts, "Audio setting changed")
+	}
+	if _, ok := changes["rotation_enabled"]; ok {
+		parts = append(parts, "Rotation setting changed")
+	}
+	if _, ok := changes["rotation_interval"]; ok {
+		parts = append(parts, "Rotation interval changed")
+	}
+	if _, ok := changes["debug_mode"]; ok {
+		parts = append(parts, "Debug mode changed")
+	}
+	if _, ok := changes["positive_prompt"]; ok {
+		parts = append(parts, "Positive prompt updated")
+	}
+	if _, ok := changes["negative_prompt"]; ok {
+		parts = append(parts, "Negative prompt updated")
+	}
+	if _, ok := changes["max_tokens"]; ok {
+		parts = append(parts, "Max tokens changed")
+	}
+
+	if len(parts) == 0 {
+		return "Settings saved (no changes detected)"
+	}
+
+	return "Settings saved: " + strings.Join(parts, ", ")
 }
 
 func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
