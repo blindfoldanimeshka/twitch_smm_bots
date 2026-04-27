@@ -4,7 +4,10 @@ import os
 import tempfile
 from typing import Optional
 import threading
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Local STT API", version="1.0.0")
 
@@ -22,7 +25,9 @@ def get_model() -> WhisperModel:
         return model
     with model_lock:
         if model is None:
+            logger.info(f"Loading Whisper model: {MODEL_NAME} on {DEVICE} with {COMPUTE_TYPE}")
             model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+            logger.info("Whisper model loaded successfully")
     return model
 
 
@@ -42,6 +47,7 @@ async def transcriptions(
     model_name: str = Form(..., alias="model"),
     language: Optional[str] = Form(default=None),
 ):
+    logger.info(f"Received transcription request: file={file.filename}, language={language}")
     _ = model_name  # compatibility field for OpenAI-style API
     if not file.filename:
         raise HTTPException(status_code=400, detail="file is required")
@@ -57,8 +63,12 @@ async def transcriptions(
         tmp.write(content)
         tmp_path = tmp.name
 
+    logger.info(f"Audio file saved to {tmp_path}, size: {len(content)} bytes")
+
     try:
+        logger.info("Getting Whisper model...")
         stt_model = get_model()
+        logger.info("Starting transcription...")
         segments, _info = stt_model.transcribe(
             tmp_path,
             language=language,
@@ -66,7 +76,11 @@ async def transcriptions(
             beam_size=1,
         )
         text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
+        logger.info(f"Transcription complete: {len(text)} chars")
         return {"text": text}
+    except Exception as e:
+        logger.error(f"Transcription error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
             os.remove(tmp_path)

@@ -4,6 +4,7 @@ import { api, type Settings as SettingsType } from '../api/client'
 import { GridBeam } from '../components/ui/grid-beam'
 import { SettingsLogPanel } from '../components/SettingsLogPanel'
 import { Switch } from '../components/ui/switch'
+import { AudioTestModal } from '../components/AudioTestModal'
 
 export default function Settings() {
   const queryClient = useQueryClient()
@@ -27,6 +28,7 @@ export default function Settings() {
   const [testingConnection, setTestingConnection] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [saveError, setSaveError] = useState(false)
+  const [audioModalOpen, setAudioModalOpen] = useState(false)
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -101,6 +103,10 @@ export default function Settings() {
       ...formState,
       updated_at: new Date().toISOString(),
     })
+  }
+
+  const testAudioTranscription = async () => {
+    setAudioModalOpen(true)
   }
 
   const handleSave = () => {
@@ -311,7 +317,7 @@ export default function Settings() {
           Модель загрузится автоматически при первом запросе.
         </div>
 
-        <div style={{ marginTop: 'var(--space-6)', display: 'flex', gap: 'var(--space-4)' }}>
+        <div style={{ marginTop: 'var(--space-6)', display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn ghost cursor-target"
@@ -322,6 +328,13 @@ export default function Settings() {
           </button>
           <button
             type="button"
+            className="btn ghost cursor-target"
+            onClick={testAudioTranscription}
+          >
+            🎤 ТЕСТ ТРАНСКРИПЦИИ
+          </button>
+          <button
+            type="button"
             className="btn primary cursor-target"
             onClick={saveLLMSettings}
             disabled={updateSettingsMutation.isPending}
@@ -329,6 +342,7 @@ export default function Settings() {
             {updateSettingsMutation.isPending ? '⟳ СОХРАНЕНИЕ...' : '💾 СОХРАНИТЬ НАСТРОЙКИ LLM'}
           </button>
         </div>
+
         </div>
       </GridBeam>
 
@@ -538,6 +552,12 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <AudioTestModal
+        isOpen={audioModalOpen}
+        onClose={() => setAudioModalOpen(false)}
+        channel={formState.debug_channel}
+      />
 
       <style>{`
         @keyframes slideIn {

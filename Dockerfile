@@ -1,4 +1,13 @@
-FROM golang:1.26-alpine AS builder
+# Используем базовый образ Ubuntu для сборки
+FROM ubuntu:22.04 AS builder
+
+# Устанавливаем Go
+RUN apt-get update && apt-get install -y wget && \
+    wget https://go.dev/dl/go1.23.0.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.23.0.linux-amd64.tar.gz && \
+    rm go1.23.0.linux-amd64.tar.gz
+
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /app
 
@@ -13,9 +22,21 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o bot logic.go
 
 # Финальный образ
-FROM alpine:latest
+FROM ubuntu:22.04
 
-RUN apk --no-cache add ca-certificates tzdata ffmpeg streamlink
+# Устанавливаем переменные окружения для неинтерактивной установки
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Moscow
+
+# Устанавливаем зависимости
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    ffmpeg \
+    python3 \
+    python3-pip \
+    && pip3 install --no-cache-dir streamlink \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/
 

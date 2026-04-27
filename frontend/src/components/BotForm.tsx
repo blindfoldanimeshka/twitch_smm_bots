@@ -114,7 +114,7 @@ export function BotForm({
         </div>
 
         <BotFormField
-          label="Пароль"
+          label="OAuth токен"
           name="password"
           type="password"
           value={formData.password}
@@ -123,8 +123,8 @@ export function BotForm({
           error={errors.password}
           touched={touchedFields.password}
           required={!isEditing}
-          placeholder={isEditing ? 'Оставьте пустым, чтобы не менять' : '••••••••'}
-          hint={isEditing ? 'Введите новый пароль только если хотите изменить' : 'Минимум 6 символов'}
+          placeholder={isEditing ? 'Оставьте пустым, чтобы не менять' : 'oauth:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
+          hint={isEditing ? 'Введите новый токен только если хотите изменить' : 'OAuth токен из https://twitchapps.com/tmi/ (с префиксом oauth: или без)'}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="2" />

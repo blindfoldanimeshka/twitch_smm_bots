@@ -9,6 +9,7 @@ import { Dock } from './components/ui/dock'
 import TargetCursor from './components/ui/TargetCursor'
 import { PixelSnow } from './components/ui/PixelSnow'
 import { FloatingProviderStatus } from './components/FloatingProviderStatus'
+import { DebugModeNotification } from './components/DebugModeNotification'
 import { AnimatePresence, motion } from 'framer-motion'
 import './styles/main.css'
 
@@ -123,6 +124,7 @@ function App() {
           className="fixed inset-0 z-0"
         />
         <StatusBar onNavigateToSettings={() => setCurrentPage('settings')} />
+        <DebugModeNotification />
         <main className="page relative z-10">
           <AnimatePresence mode="wait">
             {currentPage === 'dashboard' && (

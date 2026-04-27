@@ -38,6 +38,16 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	rateLimiter := NewRateLimiter(100, time.Minute)
 	go rateLimiter.Cleanup()
 
+	// WebSocket endpoint без CORS middleware
+	router.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
+		// Проверка API ключа для WebSocket
+		if r.URL.Query().Get("api_key") != apiKey {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		hub.ServeWS(w, r)
+	}).Methods("GET")
+
 	api := router.PathPrefix("/api").Subrouter()
 	api.Use(SecurityHeadersMiddleware)
 	api.Use(RateLimitMiddleware(rateLimiter))
@@ -63,14 +73,15 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	api.HandleFunc("/settings", handler.GetSettings).Methods("GET")
 	api.HandleFunc("/settings", handler.UpdateSettings).Methods("POST")
 	api.HandleFunc("/settings/logs", handler.GetSettingsLogs).Methods("GET")
-	api.HandleFunc("/ws", hub.ServeWS).Methods("GET")
+	api.HandleFunc("/settings/test-audio", handler.TestAudio).Methods("GET")
+	api.HandleFunc("/settings/test-llm", handler.TestLLM).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
 		AllowCredentials: true,
-		Debug:            true,
+		Debug:            false,
 	})
 
 	s.httpServer = &http.Server{

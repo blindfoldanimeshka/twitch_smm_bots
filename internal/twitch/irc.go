@@ -49,6 +49,8 @@ func (c *IRCClient) Connect() error {
 		return nil
 	}
 
+	log.Printf("[IRC %s] Connecting to Twitch IRC (%s)...", c.login, twitchAddr)
+
 	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", twitchAddr, &tls.Config{MinVersion: tls.VersionTLS12})
 	if err != nil {
 		return fmt.Errorf("dial twitch irc: %w", err)
@@ -59,6 +61,8 @@ func (c *IRCClient) Connect() error {
 	c.connected = true
 	c.lastPing = time.Now()
 
+	log.Printf("[IRC %s] Authenticating...", c.login)
+
 	if err := c.sendRawLocked("PASS " + c.password); err != nil {
 		c.closeLocked()
 		return err
@@ -67,10 +71,15 @@ func (c *IRCClient) Connect() error {
 		c.closeLocked()
 		return err
 	}
+
+	log.Printf("[IRC %s] Joining channel %s...", c.login, c.channel)
+
 	if err := c.sendRawLocked("JOIN " + c.channel); err != nil {
 		c.closeLocked()
 		return err
 	}
+
+	log.Printf("[IRC %s] Successfully connected and joined %s", c.login, c.channel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
@@ -115,6 +124,8 @@ func (c *IRCClient) SendMessage(text string) error {
 	if msg == "" {
 		return nil
 	}
+
+	log.Printf("[IRC %s] Sending message to %s: %s", c.login, c.channel, msg)
 
 	return c.sendRawLocked(fmt.Sprintf("PRIVMSG %s :%s", c.channel, msg))
 }

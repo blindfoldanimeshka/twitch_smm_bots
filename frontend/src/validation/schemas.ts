@@ -21,7 +21,7 @@ export const createBotSchema = z.object({
     .max(100, 'Name must be less than 100 characters'),
 
   personality: z.enum(['веселый_фанат', 'токсик', 'нейтрал', 'хайпер'], {
-    errorMap: () => ({ message: 'Invalid personality type' }),
+    message: 'Invalid personality type',
   }),
 
   min_delay_sec: z.number()
@@ -103,7 +103,7 @@ export const createProxySchema = z.object({
     .optional(),
 
   protocol: z.enum(['http', 'https', 'socks5'], {
-    errorMap: () => ({ message: 'Protocol must be http, https or socks5' }),
+    message: 'Protocol must be http, https or socks5',
   }),
 });
 

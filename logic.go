@@ -129,9 +129,17 @@ func (l *globalLimiter) allow(now time.Time) bool {
 	return true
 }
 
+type TwitchClient interface {
+	Connect() error
+	IsConnected() bool
+	SendMessage(text string) error
+	Reconnect() error
+	Close()
+}
+
 type botRuntime struct {
 	cfg      storage.BotConfig
-	client   *twitch.IRCClient
+	client   TwitchClient
 	cancel   context.CancelFunc
 	running  bool
 	lastSent time.Time
@@ -152,16 +160,34 @@ type botManager struct {
 	apiHub          *api.Hub
 	rotationEnabled bool
 	rotationCancel  context.CancelFunc
+	debugMode       bool
 }
 
 func normalizeChannelName(raw string) string {
 	ch := strings.TrimSpace(raw)
+
+	// Если это URL, извлекаем имя канала
+	if strings.Contains(ch, "twitch.tv/") {
+		parts := strings.Split(ch, "twitch.tv/")
+		if len(parts) > 1 {
+			ch = parts[len(parts)-1]
+		}
+	}
+
 	ch = strings.TrimPrefix(ch, "#")
 	return strings.ToLower(ch)
 }
 
 func primaryChannelFromSettings(settings *storage.Settings, fallback string) string {
 	if settings != nil {
+		// Если включен режим отладки и указан debug_channel - он приоритетнее
+		if settings.DebugMode && settings.DebugChannel != "" {
+			ch := normalizeChannelName(settings.DebugChannel)
+			if ch != "" {
+				return ch
+			}
+		}
+		// Иначе берем первый канал из списка
 		for _, candidate := range settings.Channels {
 			ch := normalizeChannelName(candidate)
 			if ch != "" {
@@ -180,6 +206,7 @@ func newBotManager(
 	channel string,
 	globalLimit int,
 	audioCfg audio.Config,
+	debugMode bool,
 ) *botManager {
 	if runtimeCtx == nil {
 		runtimeCtx = context.Background()
@@ -193,6 +220,7 @@ func newBotManager(
 		audioConfig:   audioCfg,
 		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
 		bots:          make(map[string]*botRuntime),
+		debugMode:     debugMode,
 	}
 }
 
@@ -355,6 +383,12 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	// Пересоздаем клиент на актуальный канал перед запуском.
 	br.client = twitch.NewIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
 
+	// Подключаемся к Twitch IRC
+	if err := br.client.Connect(); err != nil {
+		bm.mu.Unlock()
+		return fmt.Errorf("failed to connect to Twitch IRC: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(parent)
 	br.cancel = cancel
 	br.running = true
@@ -499,15 +533,20 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			continue
 		}
 
-		if err := br.client.SendMessage(msg); err != nil {
-			log.Printf("[%s] twitch send error: %v", br.cfg.ID, err)
-			br.client.Close()
-			consecutiveErrors++
-			if consecutiveErrors >= maxConsecutiveErrors {
-				log.Printf("[%s] too many send errors, stopping bot", br.cfg.ID)
-				return
+		// В режиме отладки не отправляем сообщения в реальный чат
+		if !bm.debugMode {
+			if err := br.client.SendMessage(msg); err != nil {
+				log.Printf("[%s] twitch send error: %v", br.cfg.ID, err)
+				br.client.Close()
+				consecutiveErrors++
+				if consecutiveErrors >= maxConsecutiveErrors {
+					log.Printf("[%s] too many send errors, stopping bot", br.cfg.ID)
+					return
+				}
+				continue
 			}
-			continue
+		} else {
+			log.Printf("[%s] DEBUG MODE: message not sent to Twitch", br.cfg.ID)
 		}
 
 		// Успешная отправка - сбрасываем счетчик ошибок
@@ -634,7 +673,18 @@ func (bm *botManager) startAudio(ctx context.Context) error {
 		return nil
 	}
 	cfg := bm.audioConfig
+	hub := bm.apiHub
 	bm.mu.Unlock()
+
+	// Добавляем callback для отправки контекста через WebSocket
+	cfg.OnContextUpdate = func(context string) {
+		log.Printf("[audio] Broadcasting context update: %d chars", len(context))
+		if hub != nil {
+			hub.BroadcastAudioContext(context)
+		} else {
+			log.Printf("[audio] Hub is nil, cannot broadcast")
+		}
+	}
 
 	service := audio.NewService(cfg)
 	audioCtx, cancel := context.WithCancel(ctx)
@@ -719,6 +769,8 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	if primaryChannel != "" {
 		bm.audioConfig.Channel = primaryChannel
 	}
+	// Обновляем режим отладки
+	bm.debugMode = settings.DebugMode
 	audioWasRunning := bm.audioService != nil
 	bm.mu.Unlock()
 
@@ -951,6 +1003,7 @@ func main() {
 		STTLanguage:      env("AUDIO_STT_LANGUAGE", "ru"),
 		StreamlinkBinary: env("AUDIO_STREAMLINK_CMD", "streamlink"),
 		FFMPEGBinary:     env("AUDIO_FFMPEG_CMD", "ffmpeg"),
+		TwitchOAuthToken: env("TWITCH_OAUTH_TOKEN", ""),
 	}
 
 	apiPort, err := strconv.Atoi(apiPortStr)
@@ -1012,7 +1065,12 @@ func main() {
 		log.Printf("No default channel configured yet. Set Settings -> channels in UI before starting bots.")
 	}
 
-	manager := newBotManager(store, llmClient, cacheClient, ctx, channel, globalLimit, audioCfg)
+	debugMode := false
+	if settings != nil {
+		debugMode = settings.DebugMode
+	}
+
+	manager := newBotManager(store, llmClient, cacheClient, ctx, channel, globalLimit, audioCfg, debugMode)
 	if err := manager.loadBots(ctx); err != nil {
 		log.Fatalf("load bots error: %v", err)
 	}
@@ -1051,4 +1109,20 @@ func main() {
 	apiServer.Shutdown(shutdownCtx)
 
 	manager.stopAll()
+}
+
+func (bm *botManager) GetAudioContext() string {
+	bm.mu.Lock()
+	audioService := bm.audioService
+	bm.mu.Unlock()
+
+	if audioService == nil {
+		return ""
+	}
+
+	return audioService.GetRecentContext()
+}
+
+func (bm *botManager) TestLLMGeneration(ctx context.Context, personality string) (string, error) {
+	return bm.generateMessage(ctx, personality)
 }

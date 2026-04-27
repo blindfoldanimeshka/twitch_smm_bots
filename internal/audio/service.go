@@ -41,6 +41,8 @@ type Config struct {
 	STTLanguage      string
 	StreamlinkBinary string
 	FFMPEGBinary     string
+	TwitchOAuthToken string
+	OnContextUpdate  func(string)
 }
 
 type segment struct {
@@ -116,14 +118,17 @@ func (s *Service) loop(ctx context.Context) {
 }
 
 func (s *Service) captureAndTranscribe(ctx context.Context) {
+	log.Printf("[audio] Starting capture and transcribe cycle")
 	audioData, err := s.captureChunk(ctx)
 	if err != nil {
 		log.Printf("[audio] capture error: %v", err)
 		return
 	}
 	if len(audioData) == 0 {
+		log.Printf("[audio] captured audio is empty, skipping")
 		return
 	}
+	log.Printf("[audio] captured %d bytes of audio", len(audioData))
 
 	text, err := s.transcribe(ctx, audioData)
 	if err != nil {
@@ -133,13 +138,17 @@ func (s *Service) captureAndTranscribe(ctx context.Context) {
 
 	text = sanitizeTranscript(text)
 	if text == "" {
+		log.Printf("[audio] transcription result is empty after sanitization")
 		return
 	}
+
+	log.Printf("[audio] transcription result: %s", text)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if strings.EqualFold(text, s.lastTranscript) {
+		log.Printf("[audio] duplicate transcript, skipping")
 		return
 	}
 
@@ -147,6 +156,13 @@ func (s *Service) captureAndTranscribe(ctx context.Context) {
 	s.lastTranscript = text
 	s.segments = append(s.segments, segment{Text: text, At: now})
 	s.pruneLocked(now)
+	log.Printf("[audio] added new segment, total segments: %d", len(s.segments))
+
+	// Отправляем обновленный контекст через callback
+	if s.cfg.OnContextUpdate != nil {
+		context := s.getRecentContextLocked()
+		s.cfg.OnContextUpdate(context)
+	}
 }
 
 func (s *Service) GetRecentContext() string {
@@ -155,6 +171,10 @@ func (s *Service) GetRecentContext() string {
 
 	now := time.Now()
 	s.pruneLocked(now)
+	return s.getRecentContextLocked()
+}
+
+func (s *Service) getRecentContextLocked() string {
 	if len(s.segments) == 0 {
 		return ""
 	}
@@ -236,7 +256,17 @@ func (s *Service) resolveStreamURL(ctx context.Context) (string, error) {
 	defer cancel()
 
 	target := "https://twitch.tv/" + strings.TrimPrefix(strings.TrimSpace(s.cfg.Channel), "#")
-	cmd := exec.CommandContext(resolveCtx, s.cfg.StreamlinkBinary, "--stream-url", target, s.cfg.Quality)
+
+	args := []string{"--stream-url", target, s.cfg.Quality}
+
+	// Добавляем OAuth токен если он есть
+	if token := strings.TrimSpace(s.cfg.TwitchOAuthToken); token != "" {
+		// Убираем префикс oauth: если он есть
+		token = strings.TrimPrefix(token, "oauth:")
+		args = append(args, "--twitch-api-header", "Authorization=Bearer "+token)
+	}
+
+	cmd := exec.CommandContext(resolveCtx, s.cfg.StreamlinkBinary, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("streamlink resolve failed: %w", err)
@@ -256,7 +286,8 @@ func (s *Service) resolveStreamURL(ctx context.Context) (string, error) {
 }
 
 func (s *Service) transcribe(ctx context.Context, audioData []byte) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	log.Printf("[audio] Starting transcription, audio size: %d bytes", len(audioData))
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	var body bytes.Buffer
@@ -278,6 +309,7 @@ func (s *Service) transcribe(ctx context.Context, audioData []byte) (string, err
 		return "", fmt.Errorf("close multipart writer: %w", err)
 	}
 
+	log.Printf("[audio] Sending request to STT service: %s", s.cfg.STTURL)
 	req, err := http.NewRequestWithContext(reqCtx, "POST", s.cfg.STTURL, &body)
 	if err != nil {
 		return "", err
@@ -293,6 +325,8 @@ func (s *Service) transcribe(ctx context.Context, audioData []byte) (string, err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("[audio] STT response status: %d", resp.StatusCode)
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("read stt response: %w", err)
@@ -300,6 +334,8 @@ func (s *Service) transcribe(ctx context.Context, audioData []byte) (string, err
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("stt status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+
+	log.Printf("[audio] STT response body: %s", string(respBody))
 
 	var parsed struct {
 		Text string `json:"text"`

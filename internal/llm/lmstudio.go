@@ -97,7 +97,8 @@ func (c *Client) autoInitializeLMStudio() {
 
 // checkLMStudioAvailable проверяет доступность LM Studio
 func (c *Client) checkLMStudioAvailable(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", nil)
+	url := strings.TrimSuffix(c.baseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -117,7 +118,8 @@ func (c *Client) checkLMStudioAvailable(ctx context.Context) error {
 
 // getAvailableModels получает список доступных моделей
 func (c *Client) getAvailableModels(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", nil)
+	url := strings.TrimSuffix(c.baseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +230,7 @@ func (c *Client) generateOnce(ctx context.Context, systemPrompt, userPrompt stri
 		return "", fmt.Errorf("marshal error: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/chat/completions", c.baseURL)
+	url := strings.TrimSuffix(c.baseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err

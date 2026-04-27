@@ -26,6 +26,8 @@ type BotManager interface {
 
 type SettingsManager interface {
 	ApplySettings(ctx context.Context, settings *storage.Settings) error
+	GetAudioContext() string
+	TestLLMGeneration(ctx context.Context, personality string) (string, error)
 }
 
 type BotInfo struct {
@@ -256,10 +258,8 @@ func (h *Handler) StartBot(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	botID := vars["id"]
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := h.manager.StartBot(ctx, botID); err != nil {
+	// Используем context.Background() для долгоживущего бота, а не контекст запроса
+	if err := h.manager.StartBot(context.Background(), botID); err != nil {
 		http.Error(w, `{"error":"failed to start bot"}`, http.StatusInternalServerError)
 		return
 	}
@@ -709,4 +709,53 @@ func (h *Handler) GetSettingsLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
+}
+
+func (h *Handler) TestAudio(w http.ResponseWriter, r *http.Request) {
+	if h.settingsManager == nil {
+		http.Error(w, `{"error":"settings manager not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	audioContext := h.settingsManager.GetAudioContext()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"context": audioContext,
+		"status":  "ok",
+	})
+}
+
+func (h *Handler) TestLLM(w http.ResponseWriter, r *http.Request) {
+	if h.settingsManager == nil {
+		http.Error(w, `{"error":"settings manager not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Personality string `json:"personality"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Personality == "" {
+		req.Personality = "нейтрал"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	message, err := h.settingsManager.TestLLMGeneration(ctx, req.Personality)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"LLM generation failed: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": message,
+		"status":  "ok",
+	})
 }

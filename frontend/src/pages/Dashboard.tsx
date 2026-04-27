@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useWebSocket, type WSMessage } from '../hooks/useWebSocket'
 import { StatsComponent } from '../components/Stats'
 import { BotList } from '../components/BotList'
+import { DebugMessagesPanel } from '../components/DebugMessagesPanel'
 
 function useBotMutation<T>(
   mutationFn: (arg: T) => Promise<any>
@@ -62,6 +63,8 @@ export default function Dashboard() {
       </header>
 
       <StatsComponent stats={stats} wsConnected={connected} />
+
+      <DebugMessagesPanel />
 
       <BotList
         bots={bots}

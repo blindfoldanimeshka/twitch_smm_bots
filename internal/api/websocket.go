@@ -140,6 +140,18 @@ func (h *Hub) BroadcastSettingsLog(logEntry storage.SettingsLog) {
 	h.broadcast <- data
 }
 
+func (h *Hub) BroadcastAudioContext(context string) {
+	log.Printf("[WebSocket] Broadcasting audio context to %d clients: %s", len(h.clients), context)
+	msg := WSMessage{
+		Type: "audio_context",
+		Payload: map[string]interface{}{
+			"context": context,
+		},
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
