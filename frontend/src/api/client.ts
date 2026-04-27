@@ -81,6 +81,24 @@ export interface LLMStatus {
   url: string;
 }
 
+export interface BotLogEntry {
+  id?: number;
+  bot_id: string;
+  log_type: string;
+  level: string;
+  message: string;
+  context?: Record<string, any>;
+  created_at: string;
+}
+
+export interface SettingsLogEntry {
+  id?: number;
+  level: string;
+  message: string;
+  changes?: Record<string, any>;
+  created_at: string;
+}
+
 const client = axios.create({
   baseURL: config.apiUrl,
   headers: {
@@ -149,4 +167,12 @@ export const api = {
 
   // LLM Status
   getLLMStatus: () => client.get<LLMStatus>('/api/llm/status'),
+
+  // Bot Logs
+  getBotLogs: (botId: string, limit: number = 100) =>
+    client.get<BotLogEntry[]>(`/api/bots/${botId}/logs?limit=${limit}`),
+
+  // Settings Logs
+  getSettingsLogs: (limit: number = 50) =>
+    client.get<SettingsLogEntry[]>(`/api/settings/logs?limit=${limit}`),
 };
