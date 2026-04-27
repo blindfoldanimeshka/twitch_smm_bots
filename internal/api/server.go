@@ -21,9 +21,9 @@ type Server struct {
 	corsOrigins []string
 }
 
-func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, apiKey string, port int, corsOrigins []string) *Server {
+func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, cacheClient CacheClient, apiKey string, port int, corsOrigins []string) *Server {
 	hub := NewHub()
-	handler := NewHandler(manager, store, hub, llmClient)
+	handler := NewHandler(manager, store, hub, llmClient, cacheClient)
 
 	s := &Server{
 		handler:     handler,
@@ -52,6 +52,7 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	api.HandleFunc("/bots/{id}", handler.DeleteBot).Methods("DELETE")
 	api.HandleFunc("/bots/{id}/start", handler.StartBot).Methods("POST")
 	api.HandleFunc("/bots/{id}/stop", handler.StopBot).Methods("POST")
+	api.HandleFunc("/bots/{id}/logs", handler.GetBotLogs).Methods("GET")
 	api.HandleFunc("/bots/start-all", handler.StartAll).Methods("POST")
 	api.HandleFunc("/bots/stop-all", handler.StopAll).Methods("POST")
 	api.HandleFunc("/stats", handler.GetStats).Methods("GET")
@@ -60,6 +61,7 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	api.HandleFunc("/proxies/{id}", handler.DeleteProxy).Methods("DELETE")
 	api.HandleFunc("/settings", handler.GetSettings).Methods("GET")
 	api.HandleFunc("/settings", handler.UpdateSettings).Methods("POST")
+	api.HandleFunc("/settings/logs", handler.GetSettingsLogs).Methods("GET")
 	api.HandleFunc("/ws", hub.ServeWS).Methods("GET")
 
 	c := cors.New(cors.Options{

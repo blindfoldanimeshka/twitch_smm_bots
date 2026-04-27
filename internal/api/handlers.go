@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,9 +38,15 @@ type Handler struct {
 	store           *storage.Store
 	hub             *Hub
 	llmClient       *llm.Client
+	cacheClient     CacheClient
 }
 
-func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *llm.Client) *Handler {
+type CacheClient interface {
+	GetBotLogs(ctx context.Context, botID string, limit int) ([]storage.BotLog, error)
+	GetSettingsLogs(ctx context.Context, limit int) ([]storage.SettingsLog, error)
+}
+
+func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
 	var settingsManager SettingsManager
 	if sm, ok := manager.(SettingsManager); ok {
 		settingsManager = sm
@@ -51,6 +58,7 @@ func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *l
 		store:           store,
 		hub:             hub,
 		llmClient:       llmClient,
+		cacheClient:     cacheClient,
 	}
 }
 
@@ -471,4 +479,79 @@ func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, response)
+}
+
+func (h *Handler) GetBotLogs(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	botID := vars["id"]
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var logs []storage.BotLog
+	var err error
+
+	if h.cacheClient != nil {
+		logs, err = h.cacheClient.GetBotLogs(ctx, botID, limit)
+		if err == nil && len(logs) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(logs)
+			return
+		}
+	}
+
+	logs, err = h.store.GetBotLogs(ctx, botID, limit)
+	if err != nil {
+		w.Header().Set("X-Log-Status", "unavailable")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]storage.BotLog{})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (h *Handler) GetSettingsLogs(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var logs []storage.SettingsLog
+	var err error
+
+	if h.cacheClient != nil {
+		logs, err = h.cacheClient.GetSettingsLogs(ctx, limit)
+		if err == nil && len(logs) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(logs)
+			return
+		}
+	}
+
+	logs, err = h.store.GetSettingsLogs(ctx, limit)
+	if err != nil {
+		w.Header().Set("X-Log-Status", "unavailable")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]storage.SettingsLog{})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
 }

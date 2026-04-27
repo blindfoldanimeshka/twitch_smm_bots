@@ -943,7 +943,7 @@ func main() {
 		log.Printf("no bots found in database; add rows into table bots first")
 	}
 
-	apiServer := api.NewServer(manager, store, llmClient, apiKey, apiPort, corsOrigins)
+	apiServer := api.NewServer(manager, store, llmClient, cacheClient, apiKey, apiPort, corsOrigins)
 	manager.setAPIHub(apiServer.Hub())
 
 	go func() {
