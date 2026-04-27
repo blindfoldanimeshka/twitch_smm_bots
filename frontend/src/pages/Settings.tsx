@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type Settings as SettingsType } from '../api/client'
 import { GridBeam } from '../components/ui/grid-beam'
 import { SettingsLogPanel } from '../components/SettingsLogPanel'
+import { Switch } from '../components/ui/switch'
 
 export default function Settings() {
   const queryClient = useQueryClient()
@@ -131,17 +132,17 @@ export default function Settings() {
       </header>
 
       <nav className="quick-tiles">
-        <a className="quick-tile" href="#channels">
+        <a className="quick-tile cursor-target" href="#channels">
           <span className="quick-tile__label">ШАГ 1</span>
           <span className="quick-tile__title">ЦЕЛЕВЫЕ КАНАЛЫ</span>
           <p className="quick-tile__desc">Список стримеров, куда боты будут заходить</p>
         </a>
-        <a className="quick-tile quick-tile--primary" href="#debug">
+        <a className="quick-tile quick-tile--primary cursor-target" href="#debug">
           <span className="quick-tile__label">ТЕСТИРОВАНИЕ</span>
           <span className="quick-tile__title">РЕЖИМ ОТЛАДКИ</span>
           <p className="quick-tile__desc">Проверка ботов без отправки в реальный чат</p>
         </a>
-        <a className="quick-tile" href="#llm">
+        <a className="quick-tile cursor-target" href="#llm">
           <span className="quick-tile__label">LLM</span>
           <span className="quick-tile__title">ПРОВАЙДЕР AI</span>
           <p className="quick-tile__desc">Настройка подключения к языковой модели</p>
@@ -178,7 +179,7 @@ export default function Settings() {
               {formState.channels.length > 1 && (
                 <button
                   type="button"
-                  className="btn danger"
+                  className="btn danger cursor-target"
                   onClick={() => removeChannel(index)}
                   style={{ marginBottom: '0' }}
                 >
@@ -187,7 +188,7 @@ export default function Settings() {
               )}
             </div>
           ))}
-          <button type="button" className="btn ghost" onClick={addChannel}>
+          <button type="button" className="btn ghost cursor-target" onClick={addChannel}>
             + ДОБАВИТЬ КАНАЛ
           </button>
         </div>
@@ -201,13 +202,14 @@ export default function Settings() {
         </p>
 
         <div className="field" style={{ marginTop: 'var(--space-6)' }}>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
+          <label className="switch-row">
+            <Switch
               checked={formState.debug_mode}
-              onChange={(e) => setFormState(prev => ({ ...prev, debug_mode: e.target.checked }))}
+              onCheckedChange={(checked) => setFormState(prev => ({ ...prev, debug_mode: checked }))}
             />
-            <span>ВКЛЮЧИТЬ РЕЖИМ ОТЛАДКИ</span>
+            <span style={{ color: formState.debug_mode ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+              ВКЛЮЧИТЬ РЕЖИМ ОТЛАДКИ
+            </span>
           </label>
         </div>
 
@@ -312,7 +314,7 @@ export default function Settings() {
         <div style={{ marginTop: 'var(--space-6)', display: 'flex', gap: 'var(--space-4)' }}>
           <button
             type="button"
-            className="btn ghost"
+            className="btn ghost cursor-target"
             onClick={testLLMConnection}
             disabled={testingConnection}
           >
@@ -320,7 +322,7 @@ export default function Settings() {
           </button>
           <button
             type="button"
-            className="btn primary"
+            className="btn primary cursor-target"
             onClick={saveLLMSettings}
             disabled={updateSettingsMutation.isPending}
           >
@@ -407,13 +409,14 @@ export default function Settings() {
         </p>
 
         <div className="field">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
+          <label className="switch-row">
+            <Switch
               checked={formState.audio_enabled}
-              onChange={(e) => setFormState(prev => ({ ...prev, audio_enabled: e.target.checked }))}
+              onCheckedChange={(checked) => setFormState(prev => ({ ...prev, audio_enabled: checked }))}
             />
-            <span>ВКЛЮЧИТЬ АНАЛИЗ АУДИО СО СТРИМА</span>
+            <span style={{ color: formState.audio_enabled ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+              ВКЛЮЧИТЬ АНАЛИЗ АУДИО СО СТРИМА
+            </span>
           </label>
         </div>
 
@@ -431,13 +434,14 @@ export default function Settings() {
         </p>
 
         <div className="field">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
+          <label className="switch-row">
+            <Switch
               checked={formState.rotation_enabled}
-              onChange={(e) => setFormState(prev => ({ ...prev, rotation_enabled: e.target.checked }))}
+              onCheckedChange={(checked) => setFormState(prev => ({ ...prev, rotation_enabled: checked }))}
             />
-            <span>ВКЛЮЧИТЬ РОТАЦИЮ БОТОВ</span>
+            <span style={{ color: formState.rotation_enabled ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+              ВКЛЮЧИТЬ РОТАЦИЮ БОТОВ
+            </span>
           </label>
         </div>
 

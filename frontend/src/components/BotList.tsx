@@ -1,5 +1,6 @@
 import type { Bot } from '../api/client'
 import { BotCard } from './BotCard'
+import InteractiveHoverButton from './ui/interactive-hover-button'
 
 interface BotListProps {
   bots: Bot[]
@@ -16,12 +17,20 @@ export const BotList = ({ bots, onStart, onStop, onDelete, onStartAll, onStopAll
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
         <h2>АКТИВНЫЕ БОТЫ ({bots.length})</h2>
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <button onClick={onStartAll} className="btn primary">
-            ▶ ЗАПУСТИТЬ ВСЕХ
-          </button>
-          <button onClick={onStopAll} className="btn danger">
-            ■ ОСТАНОВИТЬ ВСЕХ
-          </button>
+          <InteractiveHoverButton
+            text="▶ ЗАПУСТИТЬ ВСЕХ"
+            loadingText="Запуск..."
+            successText="Запущено!"
+            onClick={onStartAll}
+            classes="bg-primary text-primary-foreground border-primary"
+          />
+          <InteractiveHoverButton
+            text="■ ОСТАНОВИТЬ ВСЕХ"
+            loadingText="Остановка..."
+            successText="Остановлено!"
+            onClick={onStopAll}
+            classes="bg-destructive text-destructive-foreground border-destructive"
+          />
         </div>
       </div>
       {bots.length === 0 ? (

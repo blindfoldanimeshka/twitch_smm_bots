@@ -1,4 +1,5 @@
 import type { Bot } from '../api/client'
+import InteractiveHoverButton from './ui/interactive-hover-button'
 
 interface BotCardProps {
   bot: Bot
@@ -33,17 +34,29 @@ export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
 
       <div className="bot-card__actions">
         {isRunning ? (
-          <button onClick={() => onStop(bot.id)} className="btn danger">
-            ■ СТОП
-          </button>
+          <InteractiveHoverButton
+            text="■ СТОП"
+            loadingText="Остановка..."
+            successText="Остановлен!"
+            onClick={() => onStop(bot.id)}
+            classes="flex-1 bg-destructive text-destructive-foreground border-destructive"
+          />
         ) : (
-          <button onClick={() => onStart(bot.id)} className="btn primary">
-            ▶ СТАРТ
-          </button>
+          <InteractiveHoverButton
+            text="▶ СТАРТ"
+            loadingText="Запуск..."
+            successText="Запущен!"
+            onClick={() => onStart(bot.id)}
+            classes="flex-1 bg-primary text-primary-foreground border-primary"
+          />
         )}
-        <button onClick={() => onDelete(bot.id)} className="btn ghost">
-          ✕ УДАЛИТЬ
-        </button>
+        <InteractiveHoverButton
+          text="✕ УДАЛИТЬ"
+          loadingText="Удаление..."
+          successText="Удалено!"
+          onClick={() => onDelete(bot.id)}
+          classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
+        />
       </div>
     </div>
   )

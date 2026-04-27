@@ -4,6 +4,8 @@ import { api } from '../api/client'
 import { BotFormModal } from '../components/BotFormModal'
 import { BotForm } from '../components/BotForm'
 import { BotLogPanel } from '../components/BotLogPanel'
+import { TiltCard } from '../components/ui/tilt-card'
+import InteractiveHoverButton from '../components/ui/interactive-hover-button'
 import { useBotForm } from '../hooks/useBotForm'
 import type { BotFormData } from '../hooks/useBotForm'
 
@@ -135,12 +137,13 @@ export default function Bots() {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
           <h2>СПИСОК БОТОВ ({bots.length})</h2>
-          <button
-            className="btn primary"
+          <InteractiveHoverButton
+            text="+ ДОБАВИТЬ БОТА"
+            loadingText="Открытие..."
+            successText="Готово!"
             onClick={handleAddNew}
-          >
-            + ДОБАВИТЬ БОТА
-          </button>
+            classes="bg-primary text-primary-foreground border-primary"
+          />
         </div>
 
         <BotFormModal
@@ -167,49 +170,53 @@ export default function Bots() {
         <div className="bot-list">
           {bots.map((bot: any) => (
             <div key={bot.id}>
-              <div className={`bot-card ${bot.status === 'running' ? 'bot-card--running' : ''}`}>
-                <div className="bot-card__header">
-                  <div>
-                    <div className="bot-card__title">{bot.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
+              <TiltCard tiltLimit={8} scale={1.02} spotlight={true} className="cursor-target">
+                <div className={`bot-card ${bot.status === 'running' ? 'bot-card--running' : ''}`}>
+                  <div className="bot-card__header">
+                    <div>
+                      <div className="bot-card__title">{bot.name}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
+                    </div>
+                    <span className={`bot-card__status bot-card__status--${bot.status}`}>
+                      {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
+                    </span>
                   </div>
-                  <span className={`bot-card__status bot-card__status--${bot.status}`}>
-                    {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
-                  </span>
-                </div>
 
-                <div className="bot-card__info">
-                  <div>ID: <code>{bot.id}</code></div>
-                  <div>ЛИЧНОСТЬ: {bot.personality}</div>
-                  <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
-                  <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
-                </div>
+                  <div className="bot-card__info">
+                    <div>ID: <code>{bot.id}</code></div>
+                    <div>ЛИЧНОСТЬ: {bot.personality}</div>
+                    <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
+                    <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
+                  </div>
 
-                <div className="bot-card__actions">
-                  <button
-                    className="btn ghost"
-                    onClick={() => handleEdit(bot)}
-                  >
-                    ✎ РЕДАКТИРОВАТЬ
-                  </button>
-                  <button
-                    className="btn danger"
-                    onClick={() => handleDelete(bot.id)}
-                  >
-                    ✕ УДАЛИТЬ
-                  </button>
-                  <button
-                    className={`btn ghost ${expandedLogs.has(bot.id) ? 'active' : ''}`}
-                    onClick={() => toggleLogs(bot.id)}
-                    style={{
-                      background: expandedLogs.has(bot.id) ? 'var(--accent-primary)' : 'transparent',
-                      color: expandedLogs.has(bot.id) ? 'var(--bg-surface)' : 'var(--text-primary)',
-                    }}
-                  >
-                    📋 ЛОГИ
-                  </button>
+                  <div className="bot-card__actions">
+                    <InteractiveHoverButton
+                      text="✎ РЕДАКТИРОВАТЬ"
+                      loadingText="Открытие..."
+                      successText="Готово!"
+                      onClick={() => handleEdit(bot)}
+                      classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
+                    />
+                    <InteractiveHoverButton
+                      text="✕ УДАЛИТЬ"
+                      loadingText="Удаление..."
+                      successText="Удалено!"
+                      onClick={() => handleDelete(bot.id)}
+                      classes="flex-1 bg-destructive text-destructive-foreground border-destructive"
+                    />
+                    <button
+                      className="btn ghost cursor-target"
+                      onClick={() => toggleLogs(bot.id)}
+                      style={{
+                        background: expandedLogs.has(bot.id) ? 'var(--accent-primary)' : 'transparent',
+                        color: expandedLogs.has(bot.id) ? 'var(--bg-surface)' : 'var(--text-primary)',
+                      }}
+                    >
+                      📋 ЛОГИ
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </TiltCard>
 
               {/* Log Panel - shown when expanded */}
               {expandedLogs.has(bot.id) && (
