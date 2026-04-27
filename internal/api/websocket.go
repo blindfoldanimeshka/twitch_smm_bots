@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"twitch-smm-bot/internal/storage"
 )
 
 var upgrader = websocket.Upgrader{
@@ -104,6 +105,36 @@ func (h *Hub) BroadcastStats(stats StatsDTO) {
 	msg := WSMessage{
 		Type:    "stats_updated",
 		Payload: stats,
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
+func (h *Hub) BroadcastBotLog(botID string, logEntry storage.BotLog) {
+	msg := WSMessage{
+		Type: "bot_message_sent",
+		Payload: BotLogPayload{
+			BotID:     botID,
+			LogType:   logEntry.LogType,
+			Level:     logEntry.Level,
+			Message:   logEntry.Message,
+			Context:   logEntry.Context,
+			Timestamp: logEntry.CreatedAt,
+		},
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
+func (h *Hub) BroadcastSettingsLog(logEntry storage.SettingsLog) {
+	msg := WSMessage{
+		Type: "settings_log",
+		Payload: SettingsLogPayload{
+			Level:     logEntry.Level,
+			Message:   logEntry.Message,
+			Changes:   logEntry.Changes,
+			Timestamp: logEntry.CreatedAt,
+		},
 	}
 	data, _ := json.Marshal(msg)
 	h.broadcast <- data

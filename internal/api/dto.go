@@ -94,3 +94,19 @@ type LLMStatusDTO struct {
 	Model     string `json:"model"`
 	URL       string `json:"url"`
 }
+
+type BotLogPayload struct {
+	BotID     string                 `json:"bot_id"`
+	LogType   string                 `json:"log_type"`
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	Context   map[string]interface{} `json:"context,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
+}
+
+type SettingsLogPayload struct {
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	Changes   map[string]interface{} `json:"changes,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
+}
