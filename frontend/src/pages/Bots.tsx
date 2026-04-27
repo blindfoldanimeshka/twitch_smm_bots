@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { BotFormModal } from '../components/BotFormModal'
 import { BotForm } from '../components/BotForm'
+import { BotLogPanel } from '../components/BotLogPanel'
 import { useBotForm } from '../hooks/useBotForm'
 import type { BotFormData } from '../hooks/useBotForm'
 
@@ -10,6 +11,7 @@ export default function Bots() {
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editingBot, setEditingBot] = useState<any | null>(null)
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
 
   const botForm = useBotForm(editingBot)
 
@@ -109,6 +111,18 @@ export default function Bots() {
     setShowForm(true)
   }
 
+  const toggleLogs = (botId: string) => {
+    setExpandedLogs(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(botId)) {
+        newSet.delete(botId)
+      } else {
+        newSet.add(botId)
+      }
+      return newSet
+    })
+  }
+
   return (
     <>
       <header className="hero">
@@ -152,38 +166,55 @@ export default function Bots() {
 
         <div className="bot-list">
           {bots.map((bot: any) => (
-            <div key={bot.id} className={`bot-card ${bot.status === 'running' ? 'bot-card--running' : ''}`}>
-              <div className="bot-card__header">
-                <div>
-                  <div className="bot-card__title">{bot.name}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
+            <div key={bot.id}>
+              <div className={`bot-card ${bot.status === 'running' ? 'bot-card--running' : ''}`}>
+                <div className="bot-card__header">
+                  <div>
+                    <div className="bot-card__title">{bot.name}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
+                  </div>
+                  <span className={`bot-card__status bot-card__status--${bot.status}`}>
+                    {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
+                  </span>
                 </div>
-                <span className={`bot-card__status bot-card__status--${bot.status}`}>
-                  {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
-                </span>
+
+                <div className="bot-card__info">
+                  <div>ID: <code>{bot.id}</code></div>
+                  <div>ЛИЧНОСТЬ: {bot.personality}</div>
+                  <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
+                  <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
+                </div>
+
+                <div className="bot-card__actions">
+                  <button
+                    className="btn ghost"
+                    onClick={() => handleEdit(bot)}
+                  >
+                    ✎ РЕДАКТИРОВАТЬ
+                  </button>
+                  <button
+                    className="btn danger"
+                    onClick={() => handleDelete(bot.id)}
+                  >
+                    ✕ УДАЛИТЬ
+                  </button>
+                  <button
+                    className={`btn ghost ${expandedLogs.has(bot.id) ? 'active' : ''}`}
+                    onClick={() => toggleLogs(bot.id)}
+                    style={{
+                      background: expandedLogs.has(bot.id) ? 'var(--accent-primary)' : 'transparent',
+                      color: expandedLogs.has(bot.id) ? 'var(--bg-surface)' : 'var(--text-primary)',
+                    }}
+                  >
+                    📋 ЛОГИ
+                  </button>
+                </div>
               </div>
 
-              <div className="bot-card__info">
-                <div>ID: <code>{bot.id}</code></div>
-                <div>ЛИЧНОСТЬ: {bot.personality}</div>
-                <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
-                <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
-              </div>
-
-              <div className="bot-card__actions">
-                <button
-                  className="btn ghost"
-                  onClick={() => handleEdit(bot)}
-                >
-                  ✎ РЕДАКТИРОВАТЬ
-                </button>
-                <button
-                  className="btn danger"
-                  onClick={() => handleDelete(bot.id)}
-                >
-                  ✕ УДАЛИТЬ
-                </button>
-              </div>
+              {/* Log Panel - shown when expanded */}
+              {expandedLogs.has(bot.id) && (
+                <BotLogPanel botId={bot.id} maxHeight={300} />
+              )}
             </div>
           ))}
         </div>
