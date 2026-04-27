@@ -800,6 +800,31 @@ func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
 	}
 }
 
+func runLogCleanupJob(ctx context.Context, store *storage.Store) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	log.Printf("Log cleanup job started (runs every 1 hour)")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Log cleanup job stopped")
+			return
+		case <-ticker.C:
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+			if err := store.CleanupOldLogs(cleanupCtx); err != nil {
+				log.Printf("Log cleanup failed: %v", err)
+			} else {
+				log.Printf("Log cleanup completed successfully")
+			}
+
+			cancel()
+		}
+	}
+}
+
 func minInterval(ratePerMin int) time.Duration {
 	if ratePerMin <= 0 {
 		ratePerMin = 10
@@ -972,6 +997,9 @@ func main() {
 	if err := store.EnsureSettingsTable(ctx); err != nil {
 		log.Fatalf("ensure settings table error: %v", err)
 	}
+
+	// Start background cleanup job for old logs
+	go runLogCleanupJob(ctx, store)
 
 	settings, err := store.GetSettings(ctx)
 	if err != nil {
