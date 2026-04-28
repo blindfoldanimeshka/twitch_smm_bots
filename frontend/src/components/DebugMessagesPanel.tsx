@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useWebSocket, type WSMessage } from '../hooks/useWebSocket'
@@ -27,7 +27,7 @@ export function DebugMessagesPanel() {
     refetchInterval: 5000,
   })
 
-  const handleWSMessage = (msg: WSMessage) => {
+  const handleWSMessage = useCallback((msg: WSMessage) => {
     if (msg.type === 'bot_message_sent' && msg.payload) {
       const newMessage: BotMessage = {
         id: Date.now().toString() + Math.random(),
@@ -39,7 +39,7 @@ export function DebugMessagesPanel() {
       }
       setMessages(prev => [...prev.slice(-49), newMessage])
     }
-  }
+  }, [])
 
   useWebSocket(handleWSMessage)
 

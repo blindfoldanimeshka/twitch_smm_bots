@@ -67,7 +67,17 @@
       "Bash(python -m json.tool)",
       "Bash(python -c \"import sys, json; data=json.load\\(sys.stdin\\); print\\('max_tokens:', data.get\\('max_tokens'\\)\\)\")",
       "Bash(python -c \"import sys, json; data=json.load\\(sys.stdin\\); print\\('llm_api_url:', data.get\\('llm_api_url'\\)\\)\")",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(lsof -ti:5173)",
+      "Bash(go test *)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_hover",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_wait_for"
     ]
-  }
+  },
+  "prefersReducedMotion": false
 }

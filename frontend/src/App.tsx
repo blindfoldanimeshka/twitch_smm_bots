@@ -8,7 +8,6 @@ import { BGPattern } from './components/ui/bg-pattern'
 import { Dock } from './components/ui/dock'
 import TargetCursor from './components/ui/TargetCursor'
 import { PixelSnow } from './components/ui/PixelSnow'
-import { FloatingProviderStatus } from './components/FloatingProviderStatus'
 import { DebugModeNotification } from './components/DebugModeNotification'
 import { AnimatePresence, motion } from 'framer-motion'
 import './styles/main.css'
@@ -163,7 +162,6 @@ function App() {
           </AnimatePresence>
         </main>
         <Dock currentPage={currentPage} onNavigate={setCurrentPage as (page: string) => void} />
-        <FloatingProviderStatus />
       </div>
     </QueryClientProvider>
     </ErrorBoundary>

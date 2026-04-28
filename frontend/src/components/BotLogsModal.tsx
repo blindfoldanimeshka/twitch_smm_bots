@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useWebSocket, type WSMessage } from '../hooks/useWebSocket'
 import { api } from '../api/client'
@@ -34,7 +34,7 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
     }
   }, [chatMessages])
 
-  const handleWSMessage = (msg: WSMessage) => {
+  const handleWSMessage = useCallback((msg: WSMessage) => {
     if (!isOpen) return
 
     if (msg.type === 'bot_message_sent' && msg.payload?.bot_id === botId) {
@@ -57,7 +57,7 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
       }
       setChatMessages(prev => [...prev, newMessage])
     }
-  }
+  }, [isOpen, botId])
 
   useWebSocket(handleWSMessage)
 

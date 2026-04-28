@@ -12,12 +12,17 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | undefined>(undefined);
   const onMessageRef = useRef(onMessage);
-  const addBotLog = useLogStore((state) => state.addBotLog);
-  const addSettingsLog = useLogStore((state) => state.addSettingsLog);
+  const addBotLogRef = useRef(useLogStore.getState().addBotLog);
+  const addSettingsLogRef = useRef(useLogStore.getState().addSettingsLog);
 
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
+
+  useEffect(() => {
+    addBotLogRef.current = useLogStore.getState().addBotLog;
+    addSettingsLogRef.current = useLogStore.getState().addSettingsLog;
+  });
 
   useEffect(() => {
     const connect = () => {
@@ -36,7 +41,7 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
           // Handle bot logs
           if (msg.type === 'bot_log') {
             const payload = msg.payload;
-            addBotLog(payload.bot_id || payload.botID, {
+            addBotLogRef.current(payload.bot_id || payload.botID, {
               botId: payload.bot_id || payload.botID,
               logType: payload.log_type || payload.logType || 'message',
               level: payload.level || 'info',
@@ -49,7 +54,7 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
           // Handle sent bot messages as log entries too
           if (msg.type === 'bot_message_sent') {
             const payload = msg.payload;
-            addBotLog(payload.bot_id || payload.botID, {
+            addBotLogRef.current(payload.bot_id || payload.botID, {
               botId: payload.bot_id || payload.botID,
               logType: 'message',
               level: 'success',
@@ -62,10 +67,9 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
           // Handle settings logs
           if (msg.type === 'settings_log') {
             const payload = msg.payload;
-            addSettingsLog({
-              level: payload.level,
+            addSettingsLogRef.current({
+              level: payload.level || 'info',
               message: payload.message,
-              changes: payload.changes,
               timestamp: new Date(payload.timestamp),
             });
           }
@@ -105,7 +109,7 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
         wsRef.current.close();
       }
     };
-  }, [addBotLog, addSettingsLog]);
+  }, []);
 
   return { connected };
 };
