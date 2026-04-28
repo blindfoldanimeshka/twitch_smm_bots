@@ -18,6 +18,82 @@ interface ChatMessage {
   confidence?: number
 }
 
+function WarpAnimations() {
+  const enterDuration = 0.5
+  const exitDuration = 0.25
+  return (
+    <>
+      <motion.div
+        className="absolute rounded-full h-1/2 w-1/2 blur-lg origin-center will-change-transform left-[25%] top-[100%]"
+        initial={{
+          scale: 0,
+          opacity: 1,
+          backgroundColor: 'hsl(280, 64%, 77%)',
+        }}
+        animate={{
+          scale: 10,
+          opacity: 0.2,
+          backgroundColor: 'hsl(270, 93%, 56%)',
+          transition: {
+            duration: enterDuration,
+            opacity: { duration: enterDuration, ease: 'easeInOut' },
+          },
+        }}
+        exit={{
+          scale: 0,
+          opacity: 1,
+          backgroundColor: 'hsl(280, 64%, 77%)',
+          transition: { duration: exitDuration },
+        }}
+      />
+      <motion.div
+        className="absolute blur-[100px] rounded-full bg-purple-500/90 h-full w-full top-[-25%] left-[-50%]"
+        initial={{ opacity: 0 }}
+        animate={{
+          opacity: 0.9,
+          transition: {
+            duration: enterDuration,
+            scale: {
+              duration: 15,
+              repeat: Infinity,
+              repeatType: 'loop',
+              ease: 'easeInOut',
+              delay: 0.35,
+            },
+          },
+          scale: [1, 0.7, 1],
+        }}
+        exit={{
+          opacity: 0,
+          transition: { duration: exitDuration },
+        }}
+      />
+      <motion.div
+        className="absolute blur-[100px] rounded-full bg-purple-500/80 w-full h-full top-[25%] left-[50%]"
+        initial={{ opacity: 0 }}
+        animate={{
+          opacity: 0.9,
+          transition: {
+            duration: enterDuration,
+            scale: {
+              duration: 15,
+              repeat: Infinity,
+              repeatType: 'loop',
+              ease: 'easeInOut',
+              delay: 0.35,
+            },
+          },
+          scale: [1, 0.7, 1],
+        }}
+        exit={{
+          opacity: 0,
+          transition: { duration: exitDuration },
+        }}
+      />
+    </>
+  )
+}
+
 export const BotLogsModal: React.FC<BotLogsModalProps> = ({
   botId,
   botName,
@@ -108,252 +184,192 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
     })
   }
 
+  const sttCount = chatMessages.filter(m => m.type === 'stt').length
+  const llmCount = chatMessages.filter(m => m.type === 'llm').length
+
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={onClose}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.8)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: 'var(--space-4)',
-        }}
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.9, opacity: 0 }}
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            width: '100%',
-            maxWidth: '700px',
-            maxHeight: '85vh',
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '6px',
-            borderRadius: '16px',
-            background: 'rgba(255, 255, 255, 0.05)',
-            backdropFilter: 'blur(40px) saturate(180%)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
-          }}
-        >
-          {/* Header */}
-          <div style={{
-            padding: 'var(--space-4)',
-            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            background: 'linear-gradient(to bottom right, rgba(255, 255, 255, 0.08), transparent)',
-            borderRadius: '12px 12px 0 0',
-          }}>
-            <div>
-              <h2 style={{
-                fontFamily: 'var(--font-display)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                fontSize: '1.25rem',
-                fontWeight: 700,
-                color: 'var(--accent-lime)',
-                margin: 0,
-              }}>
-                💬 STT ↔ LLM ЧАТ
-              </h2>
-              <div style={{
-                fontSize: '0.875rem',
-                color: 'rgba(255, 255, 255, 0.6)',
-                fontFamily: 'var(--font-mono)',
-                marginTop: 'var(--space-1)',
-              }}>
-                {botName} • {chatMessages.length} сообщений
-              </div>
-            </div>
-            <button
-              onClick={onClose}
+        <div className="absolute">
+          <div className="fixed inset-0 z-50 bg-purple-500/10">
+            <WarpAnimations />
+          </div>
+
+          <motion.div
+            onClick={onClose}
+            className="fixed inset-0 flex items-center justify-center z-[1000]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: [0.59, 0, 0.35, 1] }}
+          >
+            <motion.div
+              className="relative flex gap-4 w-[90vw] h-[80vh] max-w-[1400px]"
+              onClick={(e) => e.stopPropagation()}
+              initial={{
+                rotateX: -5,
+                skewY: -1.5,
+                scaleY: 2,
+                scaleX: 0.4,
+                y: 100,
+              }}
+              animate={{
+                rotateX: 0,
+                skewY: 0,
+                scaleY: 1,
+                scaleX: 1,
+                y: 0,
+                transition: {
+                  duration: 0.35,
+                  ease: [0.59, 0, 0.35, 1],
+                  y: { type: 'spring', visualDuration: 0.7, bounce: 0.2 },
+                },
+              }}
+              exit={{
+                rotateX: -5,
+                skewY: -1.5,
+                scaleY: 2,
+                scaleX: 0.4,
+                y: 100,
+              }}
+              transition={{ duration: 0.35, ease: [0.59, 0, 0.35, 1] }}
               style={{
-                background: 'transparent',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: 'var(--radius-sm)',
-                padding: 'var(--space-2) var(--space-3)',
-                color: 'rgba(255, 255, 255, 0.6)',
-                cursor: 'pointer',
-                fontFamily: 'var(--font-display)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                transition: 'all 0.2s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'var(--state-error)'
-                e.currentTarget.style.color = 'var(--state-error)'
-                e.currentTarget.style.background = 'rgba(255, 59, 48, 0.1)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'
-                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'
-                e.currentTarget.style.background = 'transparent'
+                transformPerspective: 1000,
+                originX: 0.5,
+                originY: 0,
               }}
             >
-              ✕ ЗАКРЫТЬ
-            </button>
-          </div>
+              {/* LEFT BLOCK - Messages */}
+              <div
+                className="flex-1 rounded-2xl overflow-hidden"
+                style={{
+                  background: 'rgba(15, 15, 20, 0.85)',
+                  backdropFilter: 'blur(20px) saturate(180%)',
+                  border: '1px solid rgba(139, 92, 246, 0.2)',
+                  boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                }}
+              >
+                <div className="p-6 border-b border-purple-500/20">
+                  <h2 className="text-2xl font-bold text-white">💬 STT ↔ LLM ЧАТ</h2>
+                  <p className="text-purple-300 text-sm mt-1">{botName}</p>
+                </div>
 
-          {/* Content */}
-          <div style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: 'var(--space-4)',
-            background: 'rgba(0, 0, 0, 0.2)',
-          }}>
-            {loading ? (
-              <div style={{
-                textAlign: 'center',
-                padding: 'var(--space-8)',
-                color: 'rgba(255, 255, 255, 0.5)',
-                fontFamily: 'var(--font-display)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-              }}>
-                ЗАГРУЗКА...
-              </div>
-            ) : chatMessages.length === 0 ? (
-              <div style={{
-                textAlign: 'center',
-                padding: 'var(--space-8)',
-                color: 'rgba(255, 255, 255, 0.5)',
-                fontFamily: 'var(--font-display)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-              }}>
-                НЕТ СООБЩЕНИЙ
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                {chatMessages.map((msg) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2 }}
-                    style={{
-                      padding: '6px',
-                      borderRadius: '12px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      backdropFilter: 'blur(20px) saturate(150%)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'
-                      e.currentTarget.style.transform = 'translateY(-2px)'
-                      e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.3)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
-                      e.currentTarget.style.transform = 'translateY(0)'
-                      e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.2)'
-                    }}
-                  >
-                    <div style={{
-                      padding: 'var(--space-3)',
-                      borderRadius: '8px',
-                      background: 'linear-gradient(to bottom right, rgba(255, 255, 255, 0.03), transparent)',
-                    }}>
-                      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-start' }}>
-                        {/* Avatar */}
-                        <div style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          background: msg.type === 'stt'
-                            ? 'linear-gradient(135deg, rgba(57,255,106,0.3), rgba(57,255,106,0.1))'
-                            : 'linear-gradient(135deg, rgba(138,180,248,0.3), rgba(138,180,248,0.1))',
-                          border: msg.type === 'stt'
-                            ? '2px solid var(--accent-lime)'
-                            : '2px solid var(--accent-blue)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '1.25rem',
-                          flexShrink: 0,
-                        }}>
-                          {msg.type === 'stt' ? '🎤' : '🤖'}
-                        </div>
-
-                        {/* Message */}
-                        <div style={{ flex: 1 }}>
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 'var(--space-2)',
-                            marginBottom: 'var(--space-1)',
-                          }}>
-                            <span style={{
-                              fontFamily: 'var(--font-display)',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em',
-                              fontSize: '0.75rem',
-                              fontWeight: 700,
-                              color: msg.type === 'stt' ? 'var(--accent-lime)' : 'var(--accent-blue)',
-                            }}>
-                              {msg.type === 'stt' ? 'STT' : 'LLM'}
-                            </span>
-                            <span style={{
-                              fontFamily: 'var(--font-mono)',
-                              fontSize: '0.7rem',
-                              color: 'rgba(255, 255, 255, 0.5)',
-                            }}>
-                              {formatTimestamp(msg.timestamp)}
-                            </span>
-                            {msg.confidence && (
-                              <span style={{
-                                fontFamily: 'var(--font-mono)',
-                                fontSize: '0.7rem',
-                                color: 'var(--accent-lime)',
-                                background: 'rgba(57,255,106,0.15)',
-                                padding: '2px 6px',
-                                borderRadius: 'var(--radius-sm)',
-                                border: '1px solid rgba(57,255,106,0.3)',
-                              }}>
-                                {Math.round(msg.confidence * 100)}%
-                              </span>
-                            )}
-                          </div>
-                          <div style={{
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: '0.875rem',
-                            color: 'rgba(255, 255, 255, 0.9)',
-                            lineHeight: 1.5,
-                            wordBreak: 'break-word',
-                          }}>
-                            {msg.message}
-                          </div>
-                        </div>
+                <div className="h-[calc(100%-88px)] overflow-y-auto p-6 space-y-4">
+                  {loading ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-purple-300">Загрузка...</div>
+                    </div>
+                  ) : chatMessages.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-purple-300/50 text-center">
+                        НЕТ СООБЩЕНИЙ
                       </div>
                     </div>
-                  </motion.div>
-                ))}
-                <div ref={messagesEndRef} />
+                  ) : (
+                    chatMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className="rounded-xl p-4"
+                        style={{
+                          background: msg.type === 'stt'
+                            ? 'rgba(139, 92, 246, 0.1)'
+                            : 'rgba(59, 130, 246, 0.1)',
+                          border: `1px solid ${msg.type === 'stt' ? 'rgba(139, 92, 246, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-2xl">{msg.type === 'stt' ? '🎤' : '🤖'}</span>
+                          <span className="text-white font-semibold">
+                            {msg.type === 'stt' ? 'STT' : 'LLM'}
+                          </span>
+                          <span className="text-purple-300/50 text-xs ml-auto">
+                            {formatTimestamp(msg.timestamp)}
+                          </span>
+                        </div>
+                        <p className="text-white/90 text-sm leading-relaxed">{msg.message}</p>
+                        {msg.confidence && (
+                          <div className="mt-2 text-xs text-purple-300/70">
+                            Уверенность: {(msg.confidence * 100).toFixed(0)}%
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
               </div>
-            )}
-          </div>
-        </motion.div>
-      </motion.div>
+
+              {/* RIGHT COLUMN */}
+              <div className="flex flex-col gap-4 w-[350px]">
+                {/* TOP RIGHT - Bot Info */}
+                <div
+                  className="rounded-2xl p-6 flex-1"
+                  style={{
+                    background: 'rgba(15, 15, 20, 0.85)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    border: '1px solid rgba(139, 92, 246, 0.2)',
+                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                  }}
+                >
+                  <h3 className="text-lg font-bold text-white mb-4">ИНФОРМАЦИЯ О БОТЕ</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">ИМЯ</div>
+                      <div className="text-white font-mono">{botName}</div>
+                    </div>
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">ID</div>
+                      <div className="text-white font-mono text-sm">{botId}</div>
+                    </div>
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">КАНАЛ</div>
+                      <div className="text-white font-mono">@{botName.toLowerCase()}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* BOTTOM RIGHT - Stats */}
+                <div
+                  className="rounded-2xl p-6 flex-1"
+                  style={{
+                    background: 'rgba(15, 15, 20, 0.85)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    border: '1px solid rgba(139, 92, 246, 0.2)',
+                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                  }}
+                >
+                  <h3 className="text-lg font-bold text-white mb-4">СТАТИСТИКА</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">STT СООБЩЕНИЙ</div>
+                      <div className="text-3xl font-bold text-purple-400">{sttCount}</div>
+                    </div>
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">LLM ОТВЕТОВ</div>
+                      <div className="text-3xl font-bold text-blue-400">{llmCount}</div>
+                    </div>
+                    <div>
+                      <div className="text-purple-300/70 text-xs mb-1">ВСЕГО</div>
+                      <div className="text-3xl font-bold text-white">{chatMessages.length}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <button
+                onClick={onClose}
+                className="absolute -top-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl hover:scale-110 transition-transform"
+                style={{
+                  background: 'rgba(139, 92, 246, 0.9)',
+                  boxShadow: '0 4px 16px rgba(139, 92, 246, 0.4)',
+                }}
+              >
+                ✕
+              </button>
+            </motion.div>
+          </motion.div>
+        </div>
       )}
     </AnimatePresence>
   )
