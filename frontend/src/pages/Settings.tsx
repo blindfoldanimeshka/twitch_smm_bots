@@ -23,6 +23,8 @@ export default function Settings() {
     llm_api_url: 'http://127.0.0.1:1234/v1',
     llm_model: '',
     llm_api_key: '',
+    twitch_client_id: '',
+    twitch_client_secret: '',
     updated_at: '',
   })
   const [testingConnection, setTestingConnection] = useState(false)
@@ -47,6 +49,8 @@ export default function Settings() {
         llm_api_url: settings.llm_api_url || 'http://127.0.0.1:1234/v1',
         llm_model: settings.llm_model || '',
         llm_api_key: settings.llm_api_key || '',
+        twitch_client_id: settings.twitch_client_id || '',
+        twitch_client_secret: settings.twitch_client_secret || '',
       })
     }
   }, [settings])
@@ -345,6 +349,43 @@ export default function Settings() {
 
         </div>
       </GridBeam>
+
+      <section className="card" id="twitch-api">
+        <h2>TWITCH API (ОПЦИОНАЛЬНО)</h2>
+        <p className="hint">
+          Настройте Twitch API для получения информации о категории/игре стрима. Это позволит ботам генерировать более релевантные сообщения.
+          Получить Client ID и Secret можно на <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-purple)' }}>dev.twitch.tv/console/apps</a>
+        </p>
+
+        <div className="field" style={{ marginTop: 'var(--space-6)' }}>
+          <label htmlFor="twitch-client-id">TWITCH CLIENT ID</label>
+          <input
+            id="twitch-client-id"
+            type="text"
+            value={formState.twitch_client_id}
+            onChange={(e) => setFormState(prev => ({ ...prev, twitch_client_id: e.target.value }))}
+            placeholder="ваш_client_id"
+          />
+          <p className="hint">Client ID из Twitch Developer Console</p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="twitch-client-secret">TWITCH CLIENT SECRET</label>
+          <input
+            id="twitch-client-secret"
+            type="password"
+            value={formState.twitch_client_secret}
+            onChange={(e) => setFormState(prev => ({ ...prev, twitch_client_secret: e.target.value }))}
+            placeholder="ваш_client_secret"
+          />
+          <p className="hint">Client Secret из Twitch Developer Console (показывается только один раз при создании)</p>
+        </div>
+
+        <div className="alert" style={{ marginTop: 'var(--space-4)' }}>
+          <strong>Что это дает:</strong> Боты смогут получать информацию о текущей игре/категории стрима и генерировать более релевантные сообщения.
+          Если не настроить, боты будут работать без этой информации.
+        </div>
+      </section>
 
       <GridBeam
         rows={2}

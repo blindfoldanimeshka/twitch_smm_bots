@@ -70,6 +70,8 @@ export interface Settings {
   llm_api_url: string;
   llm_model: string;
   llm_api_key: string;
+  twitch_client_id: string;
+  twitch_client_secret: string;
   updated_at: string;
 }
 

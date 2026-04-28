@@ -51,12 +51,10 @@ export function DebugMessagesPanel() {
 
   const isDebugMode = settings?.debug_mode || false
 
-  if (!isDebugMode) {
-    return null
-  }
-
   return (
-    <motion.div
+    <AnimatePresence>
+      {isDebugMode && (
+        <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
@@ -129,5 +127,7 @@ export function DebugMessagesPanel() {
         )}
       </AnimatePresence>
     </motion.div>
+    )}
+    </AnimatePresence>
   )
 }

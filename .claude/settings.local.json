@@ -45,7 +45,17 @@
       "Bash(docker exec *)",
       "Bash(awk '{print $5}')",
       "Bash(npx shadcn@latest add @animate-ui/components-backgrounds-bubble)",
-      "Bash(npx shadcn@latest add @animate-ui/components-backgrounds-bubble --yes)"
+      "Bash(npx shadcn@latest add @animate-ui/components-backgrounds-bubble --yes)",
+      "Bash(git stash *)",
+      "Bash(go mod *)",
+      "Bash(docker restart twitch-bot-backend *)",
+      "Bash(go get *)",
+      "Bash(awk '{print $2}')",
+      "Bash(grep -E \"\\\\.\\(go|py\\)$\")",
+      "Bash(docker system prune *)",
+      "Bash(docker rmi *)",
+      "Bash(docker image *)",
+      "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")"
     ]
   }
 }

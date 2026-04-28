@@ -76,11 +76,10 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
     }
   }
 
-  if (!isOpen) return null
-
   return (
     <AnimatePresence>
-      <motion.div
+      {isOpen && (
+        <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -203,6 +202,7 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   )
 }

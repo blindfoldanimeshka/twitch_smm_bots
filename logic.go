@@ -151,6 +151,7 @@ type botManager struct {
 	store           *storage.Store
 	llmClient       *llm.Client
 	cacheClient     *cache.Client
+	helixClient     *twitch.HelixClient
 	channel         string
 	audioConfig     audio.Config
 	audioService    *audio.Service
@@ -202,6 +203,7 @@ func newBotManager(
 	store *storage.Store,
 	llmClient *llm.Client,
 	cacheClient *cache.Client,
+	helixClient *twitch.HelixClient,
 	runtimeCtx context.Context,
 	channel string,
 	globalLimit int,
@@ -216,6 +218,7 @@ func newBotManager(
 		store:         store,
 		llmClient:     llmClient,
 		cacheClient:   cacheClient,
+		helixClient:   helixClient,
 		channel:       channel,
 		audioConfig:   audioCfg,
 		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
@@ -518,7 +521,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			continue
 		}
 
-		msg, err := bm.generateMessage(ctx, br.cfg.Personality)
+		msg, sttContext, err := bm.generateMessage(ctx, br.cfg.Personality)
 		if err != nil {
 			log.Printf("[%s] llm error: %v", br.cfg.ID, err)
 			bm.logBotEvent(br.cfg.ID, "llm", "error", "LLM generation failed", map[string]interface{}{
@@ -531,6 +534,34 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				return
 			}
 			continue
+		}
+
+		// Успешная генерация - сбрасываем счетчик ошибок и обновляем время
+		consecutiveErrors = 0
+		br.lastSent = now
+		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
+
+		// Логируем и отправляем через WebSocket ДО отправки в Twitch
+		contextData := map[string]interface{}{
+			"personality": br.cfg.Personality,
+			"channel":     normalizeChannelName(br.cfg.CurrentChannel),
+			"debug_mode":  bm.debugMode,
+		}
+		if sttContext != "" {
+			contextData["stt_context"] = sttContext
+		}
+		bm.logBotEvent(br.cfg.ID, "message", "success", msg, contextData)
+
+		if bm.cacheClient != nil {
+			cacheCtx, cancel := context.WithTimeout(ctx, cacheOperationTimeout)
+			_ = bm.cacheClient.AddMessage(cacheCtx, br.cfg.ID, msg, messageRetentionTime)
+			_ = bm.cacheClient.AddBotMessageLog(cacheCtx, br.cfg.ID, msg, br.cfg.Personality)
+			_ = bm.cacheClient.IncrementBotStats(cacheCtx, br.cfg.ID)
+			cancel()
+		}
+
+		if bm.apiHub != nil {
+			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality)
 		}
 
 		// В режиме отладки не отправляем сообщения в реальный чат
@@ -548,49 +579,57 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		} else {
 			log.Printf("[%s] DEBUG MODE: message not sent to Twitch", br.cfg.ID)
 		}
-
-		// Успешная отправка - сбрасываем счетчик ошибок
-		consecutiveErrors = 0
-		br.lastSent = now
-		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
-
-		bm.logBotEvent(br.cfg.ID, "message", "success", msg, map[string]interface{}{
-			"personality": br.cfg.Personality,
-			"channel":     normalizeChannelName(br.cfg.CurrentChannel),
-		})
-
-		if bm.cacheClient != nil {
-			// Используем родительский контекст с таймаутом вместо Background
-			cacheCtx, cancel := context.WithTimeout(ctx, cacheOperationTimeout)
-			_ = bm.cacheClient.AddMessage(cacheCtx, br.cfg.ID, msg, messageRetentionTime)
-			_ = bm.cacheClient.AddBotMessageLog(cacheCtx, br.cfg.ID, msg, br.cfg.Personality)
-			_ = bm.cacheClient.IncrementBotStats(cacheCtx, br.cfg.ID)
-			cancel()
-		}
-
-		if bm.apiHub != nil {
-			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality)
-		}
 	}
 }
 
-func (bm *botManager) generateMessage(ctx context.Context, personality string) (string, error) {
+func (bm *botManager) generateMessage(ctx context.Context, personality string) (string, string, error) {
 	p, ok := personalities[personality]
 	if !ok {
 		p = personalities[PersonalityNeutral]
 	}
 
 	userPrompt := p.user
+	sttContext := ""
 	bm.mu.Lock()
 	audioService := bm.audioService
+	helixClient := bm.helixClient
+	channel := bm.channel
 	bm.mu.Unlock()
 
+	// Получаем информацию о стриме (категория/игра)
+	var streamInfo *twitch.StreamInfo
+	if helixClient != nil {
+		infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+
+		info, err := helixClient.GetStreamInfo(infoCtx, channel)
+		if err != nil {
+			log.Printf("[Helix] Failed to get stream info: %v", err)
+		} else {
+			streamInfo = info
+		}
+	}
+
+	// Добавляем контекст из аудио транскрипции
 	if audioService != nil {
 		streamContext := strings.TrimSpace(audioService.GetRecentContext())
 		if streamContext != "" {
+			sttContext = streamContext
 			userPrompt = p.user + "\n\nКонтекст из недавней транскрипции стрима (может быть неточным):\n" +
 				streamContext +
 				"\n\nИспользуй это как подсказку по теме и напиши короткое сообщение."
+		}
+	}
+
+	// Добавляем информацию о категории/игре
+	if streamInfo != nil {
+		if streamInfo.IsLive && streamInfo.GameName != "" {
+			userPrompt += fmt.Sprintf("\n\nСтример сейчас играет в: %s", streamInfo.GameName)
+			if streamInfo.Title != "" {
+				userPrompt += fmt.Sprintf("\nНазвание стрима: %s", streamInfo.Title)
+			}
+		} else if streamInfo.GameName != "" {
+			userPrompt += fmt.Sprintf("\n\nКатегория канала: %s", streamInfo.GameName)
 		}
 	}
 
@@ -599,14 +638,14 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 
 	// Проверка доступности LLM перед генерацией
 	if bm.llmClient == nil {
-		return "", fmt.Errorf("LLM client not initialized")
+		return "", "", fmt.Errorf("LLM client not initialized")
 	}
 
 	msg, err := bm.llmClient.Generate(llmCtx, p.system, userPrompt, llmMaxTokens)
 	if err != nil {
-		return "", fmt.Errorf("generate message for %s: %w", personality, err)
+		return "", "", fmt.Errorf("generate message for %s: %w", personality, err)
 	}
-	return strings.TrimSpace(msg), nil
+	return strings.TrimSpace(msg), sttContext, nil
 }
 
 func randomDelay(minSec, maxSec int) time.Duration {
@@ -755,6 +794,25 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 
 		bm.mu.Lock()
 		bm.llmClient = newClient
+		bm.mu.Unlock()
+	}
+
+	// Update Twitch Helix client if credentials changed
+	if settings.TwitchClientID != "" && settings.TwitchClientSecret != "" {
+		bm.mu.Lock()
+		if bm.helixClient == nil {
+			bm.helixClient = twitch.NewHelixClient(settings.TwitchClientID, settings.TwitchClientSecret)
+			if bm.helixClient != nil {
+				log.Printf("Twitch Helix API client initialized from settings")
+			}
+		}
+		bm.mu.Unlock()
+	} else {
+		bm.mu.Lock()
+		if bm.helixClient != nil {
+			log.Printf("Twitch API credentials removed, disabling Helix client")
+		}
+		bm.helixClient = nil
 		bm.mu.Unlock()
 	}
 
@@ -1070,7 +1128,7 @@ func main() {
 		debugMode = settings.DebugMode
 	}
 
-	manager := newBotManager(store, llmClient, cacheClient, ctx, channel, globalLimit, audioCfg, debugMode)
+	manager := newBotManager(store, llmClient, cacheClient, nil, ctx, channel, globalLimit, audioCfg, debugMode)
 	if err := manager.loadBots(ctx); err != nil {
 		log.Fatalf("load bots error: %v", err)
 	}
@@ -1124,5 +1182,6 @@ func (bm *botManager) GetAudioContext() string {
 }
 
 func (bm *botManager) TestLLMGeneration(ctx context.Context, personality string) (string, error) {
-	return bm.generateMessage(ctx, personality)
+	msg, _, err := bm.generateMessage(ctx, personality)
+	return msg, err
 }

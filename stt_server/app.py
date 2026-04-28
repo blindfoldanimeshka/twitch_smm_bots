@@ -19,6 +19,18 @@ model = None
 model_lock = threading.Lock()
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Preload Whisper model on startup to avoid downloading on first request"""
+    logger.info("Preloading Whisper model on startup...")
+    try:
+        get_model()
+        logger.info("Whisper model preloaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to preload Whisper model: {e}")
+        logger.info("Model will be loaded on first transcription request")
+
+
 def get_model() -> WhisperModel:
     global model
     if model is not None:

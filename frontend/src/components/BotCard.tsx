@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { Bot } from '../api/client'
 import InteractiveHoverButton from './ui/interactive-hover-button'
+import { BotLogsModal } from './BotLogsModal'
 
 interface BotCardProps {
   bot: Bot
@@ -10,6 +12,7 @@ interface BotCardProps {
 
 export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
   const isRunning = bot.status === 'running'
+  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false)
 
   return (
     <div className={`bot-card ${isRunning ? 'bot-card--running' : ''}`}>
@@ -51,6 +54,13 @@ export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
           />
         )}
         <InteractiveHoverButton
+          text="📋 ЛОГИ"
+          loadingText="Открытие..."
+          successText="Открыто!"
+          onClick={() => setIsLogsModalOpen(true)}
+          classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
+        />
+        <InteractiveHoverButton
           text="✕ УДАЛИТЬ"
           loadingText="Удаление..."
           successText="Удалено!"
@@ -58,6 +68,13 @@ export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
           classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
         />
       </div>
+
+      <BotLogsModal
+        botId={bot.id}
+        botName={bot.name}
+        isOpen={isLogsModalOpen}
+        onClose={() => setIsLogsModalOpen(false)}
+      />
     </div>
   )
 }

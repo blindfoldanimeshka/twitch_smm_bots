@@ -23,6 +23,8 @@ type Settings struct {
 	LLMApiURL        string    `json:"llm_api_url"`
 	LLMModel         string    `json:"llm_model"`
 	LLMApiKey        string    `json:"llm_api_key"`
+	TwitchClientID   string    `json:"twitch_client_id"`
+	TwitchClientSecret string  `json:"twitch_client_secret"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
@@ -42,6 +44,8 @@ CREATE TABLE IF NOT EXISTS settings (
     llm_api_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:1234/v1',
     llm_model TEXT NOT NULL DEFAULT '',
     llm_api_key TEXT NOT NULL DEFAULT '',
+    twitch_client_id TEXT NOT NULL DEFAULT '',
+    twitch_client_secret TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -66,7 +70,8 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, channels, debug_mode, debug_channel, positive_prompt, negative_prompt,
 		       max_tokens, audio_enabled, rotation_enabled, rotation_interval,
-		       llm_provider, llm_api_url, llm_model, llm_api_key, updated_at
+		       llm_provider, llm_api_url, llm_model, llm_api_key,
+		       twitch_client_id, twitch_client_secret, updated_at
 		FROM settings WHERE id = 'default'
 	`).Scan(
 		&settings.ID,
@@ -83,6 +88,8 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 		&settings.LLMApiURL,
 		&settings.LLMModel,
 		&settings.LLMApiKey,
+		&settings.TwitchClientID,
+		&settings.TwitchClientSecret,
 		&settings.UpdatedAt,
 	)
 	if err != nil {
@@ -120,6 +127,8 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 			llm_api_url = $11,
 			llm_model = $12,
 			llm_api_key = $13,
+			twitch_client_id = $14,
+			twitch_client_secret = $15,
 			updated_at = NOW()
 		WHERE id = 'default'
 	`,
@@ -136,6 +145,8 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 		settings.LLMApiURL,
 		settings.LLMModel,
 		settings.LLMApiKey,
+		settings.TwitchClientID,
+		settings.TwitchClientSecret,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
