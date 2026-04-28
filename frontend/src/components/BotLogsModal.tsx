@@ -108,15 +108,14 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
     })
   }
 
-  if (!isOpen) return null
-
   return (
     <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
         style={{
           position: 'fixed',
           top: 0,
@@ -355,6 +354,7 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   )
 }
