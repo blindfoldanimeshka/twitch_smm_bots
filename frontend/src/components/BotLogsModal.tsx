@@ -72,7 +72,6 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
         const messages: ChatMessage[] = []
         response.data.forEach((log) => {
           if (log.log_type === 'message' && log.context?.stt_context) {
-            // STT message
             messages.push({
               id: `stt-${log.id}`,
               type: 'stt',
@@ -82,7 +81,6 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
           }
 
           if (log.log_type === 'message') {
-            // LLM response
             messages.push({
               id: `llm-${log.id}`,
               type: 'llm',
@@ -110,13 +108,15 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
     })
   }
 
+  if (!isOpen) return null
+
   return (
     <AnimatePresence>
-      {isOpen && (
-        <motion.div
+      <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        onClick={onClose}
         style={{
           position: 'fixed',
           top: 0,
@@ -124,13 +124,13 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
           right: 0,
           bottom: 0,
           background: 'rgba(0, 0, 0, 0.8)',
+          backdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 9999,
           padding: 'var(--space-4)',
         }}
-        onClick={onClose}
       >
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
@@ -138,25 +138,28 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
           exit={{ scale: 0.9, opacity: 0 }}
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: 'var(--bg-base)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-md)',
             width: '100%',
-            maxWidth: '900px',
-            maxHeight: '80vh',
+            maxWidth: '700px',
+            maxHeight: '85vh',
             display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden',
+            padding: '6px',
+            borderRadius: '16px',
+            background: 'rgba(255, 255, 255, 0.05)',
+            backdropFilter: 'blur(40px) saturate(180%)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
           }}
         >
           {/* Header */}
           <div style={{
             padding: 'var(--space-4)',
-            borderBottom: '1px solid var(--border-default)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            background: 'var(--bg-surface)',
+            background: 'linear-gradient(to bottom right, rgba(255, 255, 255, 0.08), transparent)',
+            borderRadius: '12px 12px 0 0',
           }}>
             <div>
               <h2 style={{
@@ -172,7 +175,7 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
               </h2>
               <div style={{
                 fontSize: '0.875rem',
-                color: 'var(--text-muted)',
+                color: 'rgba(255, 255, 255, 0.6)',
                 fontFamily: 'var(--font-mono)',
                 marginTop: 'var(--space-1)',
               }}>
@@ -183,25 +186,27 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
               onClick={onClose}
               style={{
                 background: 'transparent',
-                border: '1px solid var(--border-default)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
                 borderRadius: 'var(--radius-sm)',
                 padding: 'var(--space-2) var(--space-3)',
-                color: 'var(--text-muted)',
+                color: 'rgba(255, 255, 255, 0.6)',
                 cursor: 'pointer',
                 fontFamily: 'var(--font-display)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
                 fontSize: '0.75rem',
                 fontWeight: 700,
-                transition: 'all var(--duration-base) var(--easing)',
+                transition: 'all 0.2s ease',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.borderColor = 'var(--state-error)'
                 e.currentTarget.style.color = 'var(--state-error)'
+                e.currentTarget.style.background = 'rgba(255, 59, 48, 0.1)'
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-default)'
-                e.currentTarget.style.color = 'var(--text-muted)'
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'
+                e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'
+                e.currentTarget.style.background = 'transparent'
               }}
             >
               ✕ ЗАКРЫТЬ
@@ -213,13 +218,13 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
             flex: 1,
             overflowY: 'auto',
             padding: 'var(--space-4)',
-            background: 'var(--bg-base)',
+            background: 'rgba(0, 0, 0, 0.2)',
           }}>
             {loading ? (
               <div style={{
                 textAlign: 'center',
                 padding: 'var(--space-8)',
-                color: 'var(--text-muted)',
+                color: 'rgba(255, 255, 255, 0.5)',
                 fontFamily: 'var(--font-display)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
@@ -230,7 +235,7 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
               <div style={{
                 textAlign: 'center',
                 padding: 'var(--space-8)',
-                color: 'var(--text-muted)',
+                color: 'rgba(255, 255, 255, 0.5)',
                 fontFamily: 'var(--font-display)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
@@ -246,85 +251,100 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
-                      display: 'flex',
-                      gap: 'var(--space-3)',
-                      alignItems: 'flex-start',
+                      padding: '6px',
+                      borderRadius: '12px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      backdropFilter: 'blur(20px) saturate(150%)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+                      transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'
+                      e.currentTarget.style.transform = 'translateY(-2px)'
+                      e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.3)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
+                      e.currentTarget.style.transform = 'translateY(0)'
+                      e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.2)'
                     }}
                   >
-                    {/* Avatar */}
                     <div style={{
-                      width: '40px',
-                      height: '40px',
-                      borderRadius: '50%',
-                      background: msg.type === 'stt'
-                        ? 'linear-gradient(135deg, rgba(57,255,106,0.2), rgba(57,255,106,0.05))'
-                        : 'linear-gradient(135deg, rgba(138,180,248,0.2), rgba(138,180,248,0.05))',
-                      border: msg.type === 'stt'
-                        ? '2px solid var(--accent-lime)'
-                        : '2px solid var(--accent-blue)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.25rem',
-                      flexShrink: 0,
+                      padding: 'var(--space-3)',
+                      borderRadius: '8px',
+                      background: 'linear-gradient(to bottom right, rgba(255, 255, 255, 0.03), transparent)',
                     }}>
-                      {msg.type === 'stt' ? '🎤' : '🤖'}
-                    </div>
+                      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-start' }}>
+                        {/* Avatar */}
+                        <div style={{
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '50%',
+                          background: msg.type === 'stt'
+                            ? 'linear-gradient(135deg, rgba(57,255,106,0.3), rgba(57,255,106,0.1))'
+                            : 'linear-gradient(135deg, rgba(138,180,248,0.3), rgba(138,180,248,0.1))',
+                          border: msg.type === 'stt'
+                            ? '2px solid var(--accent-lime)'
+                            : '2px solid var(--accent-blue)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '1.25rem',
+                          flexShrink: 0,
+                        }}>
+                          {msg.type === 'stt' ? '🎤' : '🤖'}
+                        </div>
 
-                    {/* Message */}
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        marginBottom: 'var(--space-1)',
-                      }}>
-                        <span style={{
-                          fontFamily: 'var(--font-display)',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.08em',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                          color: msg.type === 'stt' ? 'var(--accent-lime)' : 'var(--accent-blue)',
-                        }}>
-                          {msg.type === 'stt' ? 'STT' : 'LLM'}
-                        </span>
-                        <span style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '0.7rem',
-                          color: 'var(--text-muted)',
-                        }}>
-                          {formatTimestamp(msg.timestamp)}
-                        </span>
-                        {msg.confidence && (
-                          <span style={{
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: '0.7rem',
-                            color: 'var(--accent-lime)',
-                            background: 'rgba(57,255,106,0.1)',
-                            padding: '2px 6px',
-                            borderRadius: 'var(--radius-sm)',
+                        {/* Message */}
+                        <div style={{ flex: 1 }}>
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-2)',
+                            marginBottom: 'var(--space-1)',
                           }}>
-                            {Math.round(msg.confidence * 100)}%
-                          </span>
-                        )}
-                      </div>
-                      <div style={{
-                        background: msg.type === 'stt'
-                          ? 'rgba(57,255,106,0.05)'
-                          : 'rgba(138,180,248,0.05)',
-                        border: msg.type === 'stt'
-                          ? '1px solid rgba(57,255,106,0.2)'
-                          : '1px solid rgba(138,180,248,0.2)',
-                        borderRadius: 'var(--radius-sm)',
-                        padding: 'var(--space-3)',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '0.875rem',
-                        color: 'var(--text-primary)',
-                        lineHeight: 1.5,
-                        wordBreak: 'break-word',
-                      }}>
-                        {msg.message}
+                            <span style={{
+                              fontFamily: 'var(--font-display)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.08em',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              color: msg.type === 'stt' ? 'var(--accent-lime)' : 'var(--accent-blue)',
+                            }}>
+                              {msg.type === 'stt' ? 'STT' : 'LLM'}
+                            </span>
+                            <span style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '0.7rem',
+                              color: 'rgba(255, 255, 255, 0.5)',
+                            }}>
+                              {formatTimestamp(msg.timestamp)}
+                            </span>
+                            {msg.confidence && (
+                              <span style={{
+                                fontFamily: 'var(--font-mono)',
+                                fontSize: '0.7rem',
+                                color: 'var(--accent-lime)',
+                                background: 'rgba(57,255,106,0.15)',
+                                padding: '2px 6px',
+                                borderRadius: 'var(--radius-sm)',
+                                border: '1px solid rgba(57,255,106,0.3)',
+                              }}>
+                                {Math.round(msg.confidence * 100)}%
+                              </span>
+                            )}
+                          </div>
+                          <div style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: '0.875rem',
+                            color: 'rgba(255, 255, 255, 0.9)',
+                            lineHeight: 1.5,
+                            wordBreak: 'break-word',
+                          }}>
+                            {msg.message}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </motion.div>
@@ -335,7 +355,6 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
           </div>
         </motion.div>
       </motion.div>
-      )}
     </AnimatePresence>
   )
 }
