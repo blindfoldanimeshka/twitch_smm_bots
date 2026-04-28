@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useLogStore, type LogEntry } from '../stores/logStore'
 import { useWebSocket, type WSMessage } from '../hooks/useWebSocket'
 import { api } from '../api/client'
 
@@ -28,8 +27,6 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
   const [loading, setLoading] = useState(true)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const botLogsMap = useLogStore((state) => state.botLogs)
-  const setBotLogs = useLogStore((state) => state.setBotLogs)
 
   useEffect(() => {
     if (messagesEndRef.current) {
