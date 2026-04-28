@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 export interface BotFormData {
   id: string
@@ -25,6 +25,23 @@ export interface TouchedFields {
   [key: string]: boolean
 }
 
+const buildFormData = (editingBot?: any): BotFormData => {
+  if (!editingBot) {
+    return initialFormData
+  }
+
+  return {
+    id: editingBot.id,
+    twitch_login: editingBot.twitch_login,
+    password: '',
+    name: editingBot.name,
+    personality: editingBot.personality,
+    min_delay_sec: editingBot.min_delay_sec,
+    max_delay_sec: editingBot.max_delay_sec,
+    rate_limit_per_min: editingBot.rate_limit_per_min,
+  }
+}
+
 const initialFormData: BotFormData = {
   id: '',
   twitch_login: '',
@@ -37,22 +54,14 @@ const initialFormData: BotFormData = {
 }
 
 export function useBotForm(editingBot?: any) {
-  const [formData, setFormData] = useState<BotFormData>(
-    editingBot
-      ? {
-          id: editingBot.id,
-          twitch_login: editingBot.twitch_login,
-          password: '',
-          name: editingBot.name,
-          personality: editingBot.personality,
-          min_delay_sec: editingBot.min_delay_sec,
-          max_delay_sec: editingBot.max_delay_sec,
-          rate_limit_per_min: editingBot.rate_limit_per_min,
-        }
-      : initialFormData
-  )
+  const [formData, setFormData] = useState<BotFormData>(buildFormData(editingBot))
   const [touchedFields, setTouchedFields] = useState<TouchedFields>({})
   const [showAdvanced, setShowAdvanced] = useState(false)
+
+  useEffect(() => {
+    setFormData(buildFormData(editingBot))
+    setTouchedFields({})
+  }, [editingBot])
 
   const validateField = useCallback(
     (name: keyof BotFormData, value: any): string | undefined => {
@@ -75,8 +84,8 @@ export function useBotForm(editingBot?: any) {
         case 'password':
           if (!editingBot && (!value || value.trim() === ''))
             return 'Пароль обязателен'
-          if (value && value.length < 6)
-            return 'Пароль должен быть минимум 6 символов'
+          if (value && value.length < 3)
+            return 'Пароль должен быть минимум 3 символа'
           break
 
         case 'name':
@@ -130,10 +139,10 @@ export function useBotForm(editingBot?: any) {
   }, [])
 
   const reset = useCallback(() => {
-    setFormData(initialFormData)
+    setFormData(buildFormData(editingBot))
     setTouchedFields({})
     setShowAdvanced(false)
-  }, [])
+  }, [editingBot])
 
   return {
     formData,

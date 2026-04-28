@@ -59,11 +59,11 @@ type CreateProxyRequest struct {
 }
 
 type StatsDTO struct {
-	TotalBots       int `json:"total_bots"`
-	RunningBots     int `json:"running_bots"`
-	MessagesPerMin  int `json:"messages_per_min"`
-	TotalProxies    int `json:"total_proxies"`
-	EnabledProxies  int `json:"enabled_proxies"`
+	TotalBots      int `json:"total_bots"`
+	RunningBots    int `json:"running_bots"`
+	MessagesPerMin int `json:"messages_per_min"`
+	TotalProxies   int `json:"total_proxies"`
+	EnabledProxies int `json:"enabled_proxies"`
 }
 
 type ErrorResponse struct {
@@ -84,6 +84,7 @@ type BotMessagePayload struct {
 	BotID       string    `json:"bot_id"`
 	Message     string    `json:"message"`
 	Personality string    `json:"personality"`
+	Channel     string    `json:"channel,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
 }
 

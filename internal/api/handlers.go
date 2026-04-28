@@ -18,6 +18,9 @@ import (
 type BotManager interface {
 	ListBots() []BotInfo
 	GetBot(id string) (*BotInfo, error)
+	CreateBot(ctx context.Context, cfg storage.BotConfig) error
+	UpdateBot(ctx context.Context, id string, updates map[string]interface{}) error
+	DeleteBot(ctx context.Context, id string) error
 	StartBot(ctx context.Context, id string) error
 	StopBot(id string) error
 	StartAll(ctx context.Context) error
@@ -30,6 +33,17 @@ type SettingsManager interface {
 	TestLLMGeneration(ctx context.Context, personality string) (string, error)
 }
 
+type StoreInterface interface {
+	GetSettings(ctx context.Context) (*storage.Settings, error)
+	UpdateSettings(ctx context.Context, settings *storage.Settings) error
+	CreateSettingsLog(ctx context.Context, log storage.SettingsLog) error
+	GetSettingsLogs(ctx context.Context, limit int) ([]storage.SettingsLog, error)
+	GetBotLogs(ctx context.Context, botID string, limit int) ([]storage.BotLog, error)
+	ListProxies(ctx context.Context) ([]storage.Proxy, error)
+	CreateProxy(ctx context.Context, proxy storage.Proxy) error
+	DeleteProxy(ctx context.Context, id string) error
+}
+
 type BotInfo struct {
 	Config  storage.BotConfig
 	Running bool
@@ -38,7 +52,7 @@ type BotInfo struct {
 type Handler struct {
 	manager         BotManager
 	settingsManager SettingsManager
-	store           *storage.Store
+	store           StoreInterface
 	hub             *Hub
 	llmClient       *llm.Client
 	cacheClient     CacheClient
@@ -50,7 +64,7 @@ type CacheClient interface {
 	AddSettingsLog(ctx context.Context, log storage.SettingsLog) error
 }
 
-func NewHandler(manager BotManager, store *storage.Store, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
+func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
 	var settingsManager SettingsManager
 	if sm, ok := manager.(SettingsManager); ok {
 		settingsManager = sm
@@ -175,7 +189,7 @@ func (h *Handler) CreateBot(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	if err := h.store.CreateBot(ctx, cfg); err != nil {
+	if err := h.manager.CreateBot(ctx, cfg); err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			http.Error(w, `{"error":"bot with this id already exists"}`, http.StatusConflict)
 		} else {
@@ -215,11 +229,17 @@ func (h *Handler) UpdateBot(w http.ResponseWriter, r *http.Request) {
 	if req.RateLimitPerMin != nil {
 		updates["rate_limit_per_min"] = *req.RateLimitPerMin
 	}
+	if req.ProxyID != nil {
+		updates["proxy_id"] = *req.ProxyID
+	}
+	if req.AutoRotateProxy != nil {
+		updates["auto_rotate_proxy"] = *req.AutoRotateProxy
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	if err := h.store.UpdateBot(ctx, botID, updates); err != nil {
+	if err := h.manager.UpdateBot(ctx, botID, updates); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, `{"error":"bot not found"}`, http.StatusNotFound)
 		} else {
@@ -236,12 +256,15 @@ func (h *Handler) DeleteBot(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	botID := vars["id"]
 
-	h.StopBot(w, r)
+	_ = h.manager.StopBot(botID)
+	if h.hub != nil {
+		h.hub.BroadcastBotStatus(botID, "stopped")
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	if err := h.store.DeleteBot(ctx, botID); err != nil {
+	if err := h.manager.DeleteBot(ctx, botID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, `{"error":"bot not found"}`, http.StatusNotFound)
 		} else {
@@ -264,7 +287,9 @@ func (h *Handler) StartBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.hub.BroadcastBotStatus(botID, "running")
+	if h.hub != nil {
+		h.hub.BroadcastBotStatus(botID, "running")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
@@ -279,7 +304,9 @@ func (h *Handler) StopBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.hub.BroadcastBotStatus(botID, "stopped")
+	if h.hub != nil {
+		h.hub.BroadcastBotStatus(botID, "stopped")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
@@ -312,13 +339,29 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	bots := h.manager.ListBots()
 
 	stats := StatsDTO{
-		TotalBots:   len(bots),
-		RunningBots: 0,
+		TotalBots:      len(bots),
+		RunningBots:    0,
+		MessagesPerMin: 0,
+		TotalProxies:   0,
+		EnabledProxies: 0,
 	}
 
 	for _, bot := range bots {
 		if bot.Running {
 			stats.RunningBots++
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	proxies, err := h.store.ListProxies(ctx)
+	if err == nil {
+		stats.TotalProxies = len(proxies)
+		for _, p := range proxies {
+			if p.Enabled {
+				stats.EnabledProxies++
+			}
 		}
 	}
 
@@ -613,6 +656,9 @@ func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, map[string]interface{}{
 			"available": false,
 			"error":     "LLM client not initialized",
+			"provider":  "Unknown",
+			"model":     "N/A",
+			"url":       "N/A",
 		})
 		return
 	}
@@ -623,10 +669,14 @@ func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 	err := h.llmClient.HealthCheck(ctx)
 	available := err == nil
 	provider := h.llmClient.GetProvider()
+	model := h.llmClient.GetModel()
+	url := h.llmClient.GetURL()
 
 	response := map[string]interface{}{
 		"available": available,
 		"provider":  provider,
+		"model":     model,
+		"url":       url,
 	}
 
 	if err != nil {

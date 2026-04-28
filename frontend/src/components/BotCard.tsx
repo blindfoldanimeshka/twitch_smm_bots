@@ -7,10 +7,9 @@ interface BotCardProps {
   bot: Bot
   onStart: (id: string) => void
   onStop: (id: string) => void
-  onDelete: (id: string) => void
 }
 
-export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
+export const BotCard = ({ bot, onStart, onStop }: BotCardProps) => {
   const isRunning = bot.status === 'running'
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false)
 
@@ -58,13 +57,6 @@ export const BotCard = ({ bot, onStart, onStop, onDelete }: BotCardProps) => {
           loadingText="Открытие..."
           successText="Открыто!"
           onClick={() => setIsLogsModalOpen(true)}
-          classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
-        />
-        <InteractiveHoverButton
-          text="✕ УДАЛИТЬ"
-          loadingText="Удаление..."
-          successText="Удалено!"
-          onClick={() => onDelete(bot.id)}
           classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
         />
       </div>

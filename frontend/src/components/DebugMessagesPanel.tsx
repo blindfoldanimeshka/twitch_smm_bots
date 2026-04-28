@@ -28,13 +28,13 @@ export function DebugMessagesPanel() {
   })
 
   const handleWSMessage = (msg: WSMessage) => {
-    if ((msg.type === 'bot_message_sent' || msg.type === 'bot_message') && msg.payload) {
+    if (msg.type === 'bot_message_sent' && msg.payload) {
       const newMessage: BotMessage = {
         id: Date.now().toString() + Math.random(),
         botId: msg.payload.bot_id || 'unknown',
-        botName: msg.payload.bot_name || 'Unknown Bot',
+        botName: msg.payload.bot_name || msg.payload.bot_id || 'Unknown Bot',
         message: msg.payload.message || msg.payload.text || '',
-        timestamp: new Date().toLocaleTimeString('ru-RU'),
+        timestamp: new Date(msg.payload.timestamp || Date.now()).toLocaleTimeString('ru-RU'),
         channel: msg.payload.channel,
       }
       setMessages(prev => [...prev.slice(-49), newMessage])

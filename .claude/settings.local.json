@@ -55,7 +55,19 @@
       "Bash(docker system prune *)",
       "Bash(docker rmi *)",
       "Bash(docker image *)",
-      "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")"
+      "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
+      "Bash(npx shadcn@latest add https://cult-ui.com/r/floating-panel.json --yes)",
+      "Bash(npx shadcn@latest add https://cult-ui.com/r/floating-panel.json)",
+      "Bash(npx tsc *)",
+      "Bash(npx tailwindcss *)",
+      "Bash(./node_modules/.bin/tailwindcss init *)",
+      "Bash(python3 *)",
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(npm uninstall *)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys, json; data=json.load\\(sys.stdin\\); print\\('max_tokens:', data.get\\('max_tokens'\\)\\)\")",
+      "Bash(python -c \"import sys, json; data=json.load\\(sys.stdin\\); print\\('llm_api_url:', data.get\\('llm_api_url'\\)\\)\")",
+      "Bash(git fetch *)"
     ]
   }
 }

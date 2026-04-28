@@ -49,7 +49,7 @@ docker compose up -d --build
 
 3. **Боты** → **"Добавить бота"**:
    - **Twitch Login**: `имя_вашего_бота`
-   - **Twitch Password**: `пароль_от_аккаунта`
+   - **OAuth токен**: `oauth:xxxxxxxxxxxx` (через https://twitchapps.com/tmi/)
    - **Имя**: `Любое имя`
    - **Личность**: `веселый_фанат`
    - **Min/Max задержка**: `45` / `180`
@@ -143,7 +143,7 @@ docker compose up -d --build --force-recreate
 
 ### Боты не подключаются к Twitch
 - Проверьте правильность логина и пароля
-- Используйте **пароль**, не OAuth токен
+- Используйте **OAuth токен** вида `oauth:...` (а не пароль от аккаунта)
 - Убедитесь что аккаунт не забанен
 
 ### LLM не отвечает
@@ -207,7 +207,7 @@ LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
 LLM_API_KEY=sk-or-v1-your-key
 
 # База данных (defaults)
-DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/twitch_bot_farm?sslmode=disable
+DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
 REDIS_URL=redis://redis:6379
 
 # STT (опционально)

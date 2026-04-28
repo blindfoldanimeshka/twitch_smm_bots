@@ -87,13 +87,14 @@ func (h *Hub) BroadcastBotStatus(botID, status string) {
 	h.broadcast <- data
 }
 
-func (h *Hub) BroadcastBotMessage(botID, message, personality string) {
+func (h *Hub) BroadcastBotMessage(botID, message, personality, channel string) {
 	msg := WSMessage{
 		Type: "bot_message_sent",
 		Payload: BotMessagePayload{
 			BotID:       botID,
 			Message:     message,
 			Personality: personality,
+			Channel:     channel,
 			Timestamp:   time.Now(),
 		},
 	}
@@ -112,7 +113,7 @@ func (h *Hub) BroadcastStats(stats StatsDTO) {
 
 func (h *Hub) BroadcastBotLog(botID string, logEntry storage.BotLog) {
 	msg := WSMessage{
-		Type: "bot_message_sent",
+		Type: "bot_log",
 		Payload: BotLogPayload{
 			BotID:     botID,
 			LogType:   logEntry.LogType,

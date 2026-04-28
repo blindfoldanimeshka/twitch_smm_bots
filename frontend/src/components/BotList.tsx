@@ -6,12 +6,11 @@ interface BotListProps {
   bots: Bot[]
   onStart: (id: string) => void
   onStop: (id: string) => void
-  onDelete: (id: string) => void
   onStartAll: () => void
   onStopAll: () => void
 }
 
-export const BotList = ({ bots, onStart, onStop, onDelete, onStartAll, onStopAll }: BotListProps) => {
+export const BotList = ({ bots, onStart, onStop, onStartAll, onStopAll }: BotListProps) => {
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
@@ -47,7 +46,6 @@ export const BotList = ({ bots, onStart, onStop, onDelete, onStartAll, onStopAll
               bot={bot}
               onStart={onStart}
               onStop={onStop}
-              onDelete={onDelete}
             />
           ))}
         </div>

@@ -146,12 +146,18 @@ func (c *IRCClient) readLoop(ctx context.Context, conn net.Conn) {
 		}
 
 		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				log.Printf("[IRC %s] Scanner error: %v", c.login, err)
+			}
 			break
 		}
 
 		line := scanner.Text()
+		log.Printf("[IRC %s] Received: %s", c.login, line)
+
 		if strings.HasPrefix(line, "PING ") {
 			payload := strings.TrimPrefix(line, "PING ")
+			log.Printf("[IRC %s] Responding to PING with PONG %s", c.login, payload)
 			_ = c.sendRaw("PONG " + payload)
 			c.mu.Lock()
 			c.lastPing = time.Now()

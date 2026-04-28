@@ -105,7 +105,7 @@ services:
       args:
         - VITE_API_URL=http://localhost:8080
         - VITE_WS_URL=ws://localhost:8080
-        - VITE_API_KEY=secret-api-key-12345
+        - VITE_API_KEY=${API_KEY:-secret-api-key-12345}
     container_name: twitch-bot-frontend
     restart: unless-stopped
     ports:

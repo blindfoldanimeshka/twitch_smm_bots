@@ -40,12 +40,14 @@ export function FloatingProviderStatus() {
     }
   }
 
-  const truncateUrl = (url: string, maxLength: number = 35) => {
+  const truncateUrl = (url: string | undefined, maxLength: number = 35) => {
+    if (!url) return 'N/A'
     if (url.length <= maxLength) return url
     return url.substring(0, maxLength) + '...'
   }
 
-  const getProviderBadgeColor = (provider: string) => {
+  const getProviderBadgeColor = (provider: string | undefined) => {
+    if (!provider) return '#737373'
     switch (provider.toLowerCase()) {
       case 'lmstudio':
         return '#8b5cf6'
@@ -263,7 +265,7 @@ export function FloatingProviderStatus() {
                             letterSpacing: '0.05em',
                           }}
                         >
-                          {status.provider}
+                          {status.provider || 'Unknown'}
                         </div>
                       </div>
                     </div>
@@ -408,7 +410,7 @@ export function FloatingProviderStatus() {
                           wordBreak: 'break-all',
                         }}
                       >
-                        {truncateUrl(status.url)}
+                        {truncateUrl(status?.url)}
                       </div>
                     </div>
 

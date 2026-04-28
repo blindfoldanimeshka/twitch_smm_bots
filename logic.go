@@ -32,9 +32,8 @@ const (
 	messageRetentionTime  = 5 * time.Minute
 
 	// LLM settings
-	llmTimeout      = 20 * time.Second
-	llmMaxTokens    = 60
-	llmRetryAttempts = 3
+	llmTimeout   = 20 * time.Second
+	llmMaxTokens = 60
 )
 
 type promptPair struct {
@@ -162,6 +161,9 @@ type botManager struct {
 	rotationEnabled bool
 	rotationCancel  context.CancelFunc
 	debugMode       bool
+	positivePrompt  string
+	negativePrompt  string
+	maxTokens       int
 }
 
 func normalizeChannelName(raw string) string {
@@ -224,6 +226,7 @@ func newBotManager(
 		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
 		bots:          make(map[string]*botRuntime),
 		debugMode:     debugMode,
+		maxTokens:     llmMaxTokens,
 	}
 }
 
@@ -345,6 +348,85 @@ func (bm *botManager) StartBot(ctx context.Context, id string) error {
 
 func (bm *botManager) StopBot(id string) error {
 	return bm.stopBot(id, true)
+}
+
+func (bm *botManager) CreateBot(ctx context.Context, cfg storage.BotConfig) error {
+	if err := bm.store.CreateBot(ctx, cfg); err != nil {
+		return err
+	}
+
+	channel := normalizeChannelName(cfg.CurrentChannel)
+	if channel == "" {
+		channel = normalizeChannelName(bm.channel)
+	}
+
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	bm.bots[cfg.ID] = &botRuntime{
+		cfg:    cfg,
+		client: twitch.NewIRCClient(cfg.TwitchLogin, cfg.Password, channel),
+	}
+
+	return nil
+}
+
+func (bm *botManager) UpdateBot(ctx context.Context, botID string, updates map[string]interface{}) error {
+	if err := bm.store.UpdateBot(ctx, botID, updates); err != nil {
+		return err
+	}
+
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	br, ok := bm.bots[botID]
+	if !ok {
+		return nil
+	}
+
+	if v, ok := updates["name"].(string); ok {
+		br.cfg.Name = v
+	}
+	if v, ok := updates["personality"].(string); ok {
+		br.cfg.Personality = v
+	}
+	if v, ok := updates["min_delay_sec"].(int); ok {
+		br.cfg.MinDelaySec = v
+	}
+	if v, ok := updates["max_delay_sec"].(int); ok {
+		br.cfg.MaxDelaySec = v
+	}
+	if v, ok := updates["rate_limit_per_min"].(int); ok {
+		br.cfg.RateLimitPerMin = v
+	}
+	if v, ok := updates["enabled"].(bool); ok {
+		br.cfg.Enabled = v
+	}
+	if v, ok := updates["current_channel"].(string); ok {
+		br.cfg.CurrentChannel = v
+	}
+
+	return nil
+}
+
+func (bm *botManager) DeleteBot(ctx context.Context, botID string) error {
+	bm.mu.Lock()
+	br, ok := bm.bots[botID]
+	bm.mu.Unlock()
+	if ok && br.running {
+		if err := bm.stopBot(botID, false); err != nil {
+			return err
+		}
+	}
+
+	if err := bm.store.DeleteBot(ctx, botID); err != nil {
+		return err
+	}
+
+	bm.mu.Lock()
+	delete(bm.bots, botID)
+	bm.mu.Unlock()
+
+	return nil
 }
 
 func (bm *botManager) StartAll(ctx context.Context) error {
@@ -561,7 +643,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		}
 
 		if bm.apiHub != nil {
-			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality)
+			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality, normalizeChannelName(br.cfg.CurrentChannel))
 		}
 
 		// В режиме отладки не отправляем сообщения в реальный чат
@@ -588,13 +670,19 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 		p = personalities[PersonalityNeutral]
 	}
 
-	userPrompt := p.user
 	sttContext := ""
 	bm.mu.Lock()
 	audioService := bm.audioService
 	helixClient := bm.helixClient
 	channel := bm.channel
+	positivePrompt := strings.TrimSpace(bm.positivePrompt)
+	negativePrompt := strings.TrimSpace(bm.negativePrompt)
+	maxTokens := bm.maxTokens
 	bm.mu.Unlock()
+
+	if maxTokens <= 0 {
+		maxTokens = llmMaxTokens
+	}
 
 	// Получаем информацию о стриме (категория/игра)
 	var streamInfo *twitch.StreamInfo
@@ -610,6 +698,15 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 		}
 	}
 
+	systemPrompt := p.system
+	if positivePrompt != "" {
+		systemPrompt += "\n\nОбщие инструкции: " + positivePrompt
+	}
+	if negativePrompt != "" {
+		systemPrompt += "\n\nОграничения: " + negativePrompt
+	}
+
+	userPrompt := p.user
 	// Добавляем контекст из аудио транскрипции
 	if audioService != nil {
 		streamContext := strings.TrimSpace(audioService.GetRecentContext())
@@ -641,7 +738,7 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 		return "", "", fmt.Errorf("LLM client not initialized")
 	}
 
-	msg, err := bm.llmClient.Generate(llmCtx, p.system, userPrompt, llmMaxTokens)
+	msg, err := bm.llmClient.Generate(llmCtx, systemPrompt, userPrompt, maxTokens)
 	if err != nil {
 		return "", "", fmt.Errorf("generate message for %s: %w", personality, err)
 	}
@@ -829,6 +926,13 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	}
 	// Обновляем режим отладки
 	bm.debugMode = settings.DebugMode
+	bm.positivePrompt = settings.PositivePrompt
+	bm.negativePrompt = settings.NegativePrompt
+	if settings.MaxTokens > 0 {
+		bm.maxTokens = settings.MaxTokens
+	} else {
+		bm.maxTokens = llmMaxTokens
+	}
 	audioWasRunning := bm.audioService != nil
 	bm.mu.Unlock()
 

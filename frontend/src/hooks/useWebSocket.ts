@@ -33,8 +33,8 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
         try {
           const msg: WSMessage = JSON.parse(event.data);
 
-          // Handle bot logs (extended bot_message_sent)
-          if (msg.type === 'bot_message_sent') {
+          // Handle bot logs
+          if (msg.type === 'bot_log') {
             const payload = msg.payload;
             addBotLog(payload.bot_id || payload.botID, {
               botId: payload.bot_id || payload.botID,
@@ -43,6 +43,19 @@ export const useWebSocket = (onMessage: (msg: WSMessage) => void) => {
               message: payload.message,
               context: payload.context,
               timestamp: new Date(payload.timestamp),
+            });
+          }
+
+          // Handle sent bot messages as log entries too
+          if (msg.type === 'bot_message_sent') {
+            const payload = msg.payload;
+            addBotLog(payload.bot_id || payload.botID, {
+              botId: payload.bot_id || payload.botID,
+              logType: 'message',
+              level: 'success',
+              message: payload.message,
+              context: payload.channel ? { channel: payload.channel, personality: payload.personality } : undefined,
+              timestamp: new Date(payload.timestamp || Date.now()),
             });
           }
 

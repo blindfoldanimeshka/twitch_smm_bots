@@ -40,7 +40,6 @@ export default function Dashboard() {
 
   const startBotMutation = useBotMutation((id: string) => api.startBot(id))
   const stopBotMutation = useBotMutation((id: string) => api.stopBot(id))
-  const deleteBotMutation = useBotMutation((id: string) => api.deleteBot(id))
   const startAllMutation = useBotMutation(() => api.startAll())
   const stopAllMutation = useBotMutation(() => api.stopAll())
 
@@ -70,11 +69,6 @@ export default function Dashboard() {
         bots={bots}
         onStart={(id) => startBotMutation.mutate(id)}
         onStop={(id) => stopBotMutation.mutate(id)}
-        onDelete={(id) => {
-          if (confirm(`Удалить бота ${id}?`)) {
-            deleteBotMutation.mutate(id)
-          }
-        }}
         onStartAll={() => startAllMutation.mutate(undefined)}
         onStopAll={() => stopAllMutation.mutate(undefined)}
       />
