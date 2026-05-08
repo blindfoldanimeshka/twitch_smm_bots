@@ -157,12 +157,12 @@ export default function Settings() {
           <span className="quick-tile__title">ПРОВАЙДЕР AI</span>
           <p className="quick-tile__desc">Настройка подключения к языковой модели</p>
         </a>
-        <a className="quick-tile" href="#prompts">
+        <a className="quick-tile cursor-target" href="#prompts">
           <span className="quick-tile__label">AI</span>
           <span className="quick-tile__title">ПРОМПТЫ И ПОВЕДЕНИЕ</span>
           <p className="quick-tile__desc">Настройка характера и ограничений нейросети</p>
         </a>
-        <a className="quick-tile" href="#advanced">
+        <a className="quick-tile cursor-target" href="#advanced">
           <span className="quick-tile__label">ДОПОЛНИТЕЛЬНО</span>
           <span className="quick-tile__title">ПРОДВИНУТЫЕ ФУНКЦИИ</span>
           <p className="quick-tile__desc">Аудио-подвязка, ротация ботов между стримерами</p>
@@ -172,6 +172,12 @@ export default function Settings() {
       <section className="card" id="channels">
         <h2>ЦЕЛЕВЫЕ КАНАЛЫ TWITCH</h2>
         <p className="hint">Укажите список стримеров, в чаты которых будут заходить боты. Можно указать несколько каналов.</p>
+
+        {formState.debug_mode && formState.debug_channel && (
+          <div className="alert" style={{ marginTop: 'var(--space-4)', background: 'rgba(255, 165, 0, 0.1)', borderColor: 'rgba(255, 165, 0, 0.3)' }}>
+            ⚠️ <strong>ВНИМАНИЕ:</strong> Режим отладки активен с тестовым каналом <strong>"{formState.debug_channel}"</strong>. Этот канал переопределяет список ниже.
+          </div>
+        )}
 
         <div style={{ marginTop: 'var(--space-6)' }}>
           {formState.channels.map((channel, index) => (
@@ -240,6 +246,11 @@ export default function Settings() {
         {formState.debug_mode && (
           <div className="alert">
             <strong>РЕЖИМ ОТЛАДКИ АКТИВЕН!</strong> Все сообщения ботов будут отображаться только в панели управления.
+            {formState.debug_channel && (
+              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                ⚠️ Тестовый канал <strong>"{formState.debug_channel}"</strong> переопределяет основной список каналов
+              </div>
+            )}
           </div>
         )}
       </section>

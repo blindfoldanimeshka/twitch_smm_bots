@@ -22,6 +22,7 @@ type BotManager interface {
 	UpdateBot(ctx context.Context, id string, updates map[string]interface{}) error
 	DeleteBot(ctx context.Context, id string) error
 	StartBot(ctx context.Context, id string) error
+	StartBotWithOptions(ctx context.Context, id string, disableLLM bool) error
 	StopBot(id string) error
 	StartAll(ctx context.Context) error
 	StopAll() error
@@ -42,6 +43,7 @@ type StoreInterface interface {
 	ListProxies(ctx context.Context) ([]storage.Proxy, error)
 	CreateProxy(ctx context.Context, proxy storage.Proxy) error
 	DeleteProxy(ctx context.Context, id string) error
+	Ping(ctx context.Context) error
 }
 
 type BotInfo struct {
@@ -62,6 +64,7 @@ type CacheClient interface {
 	GetBotLogs(ctx context.Context, botID string, limit int) ([]storage.BotLog, error)
 	GetSettingsLogs(ctx context.Context, limit int) ([]storage.SettingsLog, error)
 	AddSettingsLog(ctx context.Context, log storage.SettingsLog) error
+	Ping(ctx context.Context) error
 }
 
 func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
@@ -81,8 +84,49 @@ func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *l
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	health := map[string]interface{}{
+		"status": "ok",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"checks": map[string]string{},
+	}
+
+	checks := health["checks"].(map[string]string)
+	overallStatus := "ok"
+
+	// PostgreSQL check
+	if err := h.store.Ping(ctx); err != nil {
+		checks["postgres"] = "error: " + err.Error()
+		overallStatus = "degraded"
+	} else {
+		checks["postgres"] = "ok"
+	}
+
+	// Redis check
+	if err := h.cacheClient.Ping(ctx); err != nil {
+		checks["redis"] = "error: " + err.Error()
+		overallStatus = "degraded"
+	} else {
+		checks["redis"] = "ok"
+	}
+
+	// LLM API check
+	if h.llmClient != nil {
+		if err := h.llmClient.HealthCheck(ctx); err != nil {
+			checks["llm"] = "error: " + err.Error()
+			overallStatus = "degraded"
+		} else {
+			checks["llm"] = "ok"
+		}
+	} else {
+		checks["llm"] = "not configured"
+	}
+
+	health["status"] = overallStatus
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(health)
 }
 
 func (h *Handler) ListBots(w http.ResponseWriter, r *http.Request) {
@@ -281,8 +325,17 @@ func (h *Handler) StartBot(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	botID := vars["id"]
 
+	// Parse disable_llm query parameter
+	disableLLM := r.URL.Query().Get("disable_llm") == "true"
+
 	// Используем context.Background() для долгоживущего бота, а не контекст запроса
-	if err := h.manager.StartBot(context.Background(), botID); err != nil {
+	var err error
+	if disableLLM {
+		err = h.manager.StartBotWithOptions(context.Background(), botID, disableLLM)
+	} else {
+		err = h.manager.StartBot(context.Background(), botID)
+	}
+	if err != nil {
 		http.Error(w, `{"error":"failed to start bot"}`, http.StatusInternalServerError)
 		return
 	}

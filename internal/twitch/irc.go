@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 const twitchAddr = "irc.chat.twitch.tv:6697"
 
+// P0-2: Rate limit handling
 type IRCClient struct {
 	login    string
 	password string
@@ -26,6 +28,12 @@ type IRCClient struct {
 	reconnecting bool
 	lastPing    time.Time
 	cancel      context.CancelFunc
+
+	// P0-2: Rate limit state
+	rateLimited    bool
+	rateLimitUntil time.Time
+	backoffAttempts int
+	maxBackoff     time.Duration
 }
 
 func NewIRCClient(login, password, channel string) *IRCClient {
@@ -127,13 +135,104 @@ func (c *IRCClient) SendMessage(text string) error {
 
 	log.Printf("[IRC %s] Sending message to %s: %s", c.login, c.channel, msg)
 
-	return c.sendRawLocked(fmt.Sprintf("PRIVMSG %s :%s", c.channel, msg))
+	err := c.sendRawLocked(fmt.Sprintf("PRIVMSG %s :%s", c.channel, msg))
+	if err != nil {
+		// P0-2: Check for rate limit error (420)
+		if strings.Contains(err.Error(), "420") {
+			c.handleRateLimitLocked()
+			return fmt.Errorf("rate limited by Twitch (420)")
+		}
+	}
+	return err
+}
+
+// P0-2: Internal rate limit handler (must be called with lock held)
+func (c *IRCClient) handleRateLimitLocked() {
+	c.rateLimited = true
+	c.backoffAttempts++
+
+	// Exponential backoff: 2s, 4s, 8s, 16s, 32s, max 5 minutes
+	baseBackoff := time.Duration(1<<uint(c.backoffAttempts)) * time.Second
+	if baseBackoff > 5*time.Minute {
+		baseBackoff = 5 * time.Minute
+	}
+
+	// Add jitter (0-1 second)
+	jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
+	c.rateLimitUntil = time.Now().Add(baseBackoff + jitter)
+
+	log.Printf("[IRC %s] Rate limited (attempt %d), backing off until %v",
+		c.login, c.backoffAttempts, c.rateLimitUntil)
 }
 
 func (c *IRCClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closeLocked()
+}
+
+// P0-2: Check if rate limited and sleep if needed
+func (c *IRCClient) WaitForRateLimit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.rateLimited {
+		return
+	}
+
+	now := time.Now()
+	if now.Before(c.rateLimitUntil) {
+		sleepDuration := time.Until(c.rateLimitUntil)
+		log.Printf("[IRC %s] Rate limited, sleeping for %v", c.login, sleepDuration)
+		time.Sleep(sleepDuration)
+		// Reset after waiting
+		c.rateLimited = false
+		c.backoffAttempts = 0
+	}
+}
+
+// P0-2: Handle rate limit error (420)
+func (c *IRCClient) HandleRateLimit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.rateLimited = true
+	c.backoffAttempts++
+
+	// Exponential backoff: 2s, 4s, 8s, 16s, 32s, max 5 minutes
+	baseBackoff := time.Duration(1<<uint(c.backoffAttempts)) * time.Second
+	if baseBackoff > 5*time.Minute {
+		baseBackoff = 5 * time.Minute
+	}
+
+	// Add jitter (0-1 second)
+	jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
+	c.rateLimitUntil = time.Now().Add(baseBackoff + jitter)
+
+	log.Printf("[IRC %s] Rate limited (attempt %d), backing off until %v",
+		c.login, c.backoffAttempts, c.rateLimitUntil)
+}
+
+// P0-2: Check if currently rate limited
+func (c *IRCClient) IsRateLimited() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.rateLimited && time.Now().After(c.rateLimitUntil) {
+		c.rateLimited = false
+		c.backoffAttempts = 0
+	}
+	return c.rateLimited
+}
+
+// P0-2: Reset rate limit state (on successful reconnect)
+func (c *IRCClient) ResetRateLimit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.rateLimited = false
+	c.rateLimitUntil = time.Time{}
+	c.backoffAttempts = 0
 }
 
 func (c *IRCClient) readLoop(ctx context.Context, conn net.Conn) {

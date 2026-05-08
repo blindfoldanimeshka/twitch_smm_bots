@@ -1,5 +1,6 @@
-# Используем базовый образ Ubuntu для сборки
-FROM ubuntu:22.04 AS builder
+# Accept base image prefix via build arg (for mirrors)
+ARG BASE_IMAGE_PREFIX=
+FROM ${BASE_IMAGE_PREFIX}ubuntu:22.04 AS builder
 
 # Устанавливаем Go
 RUN apt-get update && apt-get install -y wget && \
@@ -22,7 +23,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o bot logic.go
 
 # Финальный образ
-FROM ubuntu:22.04
+FROM ${BASE_IMAGE_PREFIX}ubuntu:22.04
 
 # Устанавливаем переменные окружения для неинтерактивной установки
 ENV DEBIAN_FRONTEND=noninteractive

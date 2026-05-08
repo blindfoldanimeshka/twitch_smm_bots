@@ -70,6 +70,7 @@ export function BotFormModal({ isOpen, onClose, children, title }: BotFormModalP
         <motion.div
           className="bot-modal-overlay"
           onClick={onClose}
+          style={{ cursor: 'default' }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

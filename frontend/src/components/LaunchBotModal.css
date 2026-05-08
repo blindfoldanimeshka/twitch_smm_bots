@@ -1,0 +1,33 @@
+/* ═════════════════════════════════════════════════════════════════════
+   LAUNCH BOT MODAL - Cyber Grid Modal with Neon Accents
+   Matches BotFormModal.css styling
+   ═════════════════════════════════════════════════════════════════════ */
+
+.launch-option {
+  background: rgba(25, 25, 25, 0.5);
+  border: 1px solid rgba(115, 115, 115, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.launch-option:hover {
+  background: rgba(25, 25, 25, 0.8);
+  border-color: rgba(115, 115, 115, 0.4);
+  transform: translateX(4px);
+}
+
+.launch-option--selected {
+  background: rgba(139, 92, 246, 0.1) !important;
+  border-color: rgba(139, 92, 246, 0.6) !important;
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+}
+
+.launch-option--selected:hover {
+  background: rgba(139, 92, 246, 0.15) !important;
+  border-color: rgba(139, 92, 246, 0.8) !important;
+}

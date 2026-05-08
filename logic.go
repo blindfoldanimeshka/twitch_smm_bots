@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -74,6 +74,7 @@ type globalLimiter struct {
 	window      time.Duration
 	cacheClient *cache.Client
 	events      []time.Time
+	maxEvents   int // P0-6: Maximum number of events to store
 }
 
 func newGlobalLimiter(limit int, cacheClient *cache.Client) *globalLimiter {
@@ -85,6 +86,29 @@ func newGlobalLimiter(limit int, cacheClient *cache.Client) *globalLimiter {
 		window:      time.Minute,
 		cacheClient: cacheClient,
 		events:      make([]time.Time, 0, limit),
+		maxEvents:   10000, // P0-6: Default max events
+	}
+}
+
+// P0-6: Cleanup old events to prevent memory leak
+// Assumes lock is already held (called from allow() which holds the lock)
+func (l *globalLimiter) cleanup() {
+	now := time.Now()
+	cutoff := now.Add(-l.window)
+
+	// Remove old events
+	newEvents := make([]time.Time, 0, len(l.events))
+	for _, e := range l.events {
+		if e.After(cutoff) {
+			newEvents = append(newEvents, e)
+		}
+	}
+	l.events = newEvents
+
+	// P0-6: Also limit total size
+	if len(l.events) > l.maxEvents {
+		slog.Info("rate limiter: truncating events", "from", len(l.events), "to", l.maxEvents)
+		l.events = l.events[len(l.events)-l.maxEvents:]
 	}
 }
 
@@ -95,7 +119,7 @@ func (l *globalLimiter) allow(now time.Time) bool {
 
 		count, err := l.cacheClient.IncrementRateLimit(ctx, cache.GlobalRateLimitKey, l.window)
 		if err != nil {
-			log.Printf("redis rate limit error (fallback to memory): %v", err)
+			slog.Error("redis rate limit error (fallback to memory)", "error", err)
 		} else {
 			return count <= int64(l.limit)
 		}
@@ -104,21 +128,8 @@ func (l *globalLimiter) allow(now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	cutoff := now.Add(-l.window)
-	idx := 0
-	for idx < len(l.events) && l.events[idx].Before(cutoff) {
-		idx++
-	}
-	if idx > 0 {
-		l.events = append([]time.Time(nil), l.events[idx:]...)
-	}
-
-	// Prevent unbounded growth
-	const maxEvents = 10000
-	if len(l.events) >= maxEvents {
-		log.Printf("rate limiter memory limit reached, dropping oldest events")
-		l.events = l.events[len(l.events)-maxEvents/2:]
-	}
+	// P0-6: Cleanup old events first
+	l.cleanup()
 
 	if len(l.events) >= l.limit {
 		return false
@@ -134,18 +145,23 @@ type TwitchClient interface {
 	SendMessage(text string) error
 	Reconnect() error
 	Close()
+	WaitForRateLimit() // P0-2: Handle rate limits
 }
 
 type botRuntime struct {
-	cfg      storage.BotConfig
-	client   TwitchClient
-	cancel   context.CancelFunc
-	running  bool
-	lastSent time.Time
+	cfg        storage.BotConfig
+	client     TwitchClient
+	ctx        context.Context
+	cancel     context.CancelFunc
+	running    bool
+	stopping   bool // P0-1: Graceful shutdown flag
+	lastSent   time.Time
+	disableLLM bool // if true, skip LLM/STT generation
+	stopped    chan struct{} // P0-1: Channel to signal when bot fully stopped
 }
 
 type botManager struct {
-	mu              sync.Mutex
+	mu              sync.RWMutex // P0-5: RWMutex for read-heavy operations
 	runtimeCtx      context.Context
 	store           *storage.Store
 	llmClient       *llm.Client
@@ -175,6 +191,11 @@ func normalizeChannelName(raw string) string {
 		if len(parts) > 1 {
 			ch = parts[len(parts)-1]
 		}
+	}
+
+	// Убираем всё что после следующего / (если есть путь)
+	if idx := strings.Index(ch, "/"); idx != -1 {
+		ch = ch[:idx]
 	}
 
 	ch = strings.TrimPrefix(ch, "#")
@@ -293,15 +314,15 @@ func (bm *botManager) loadBots(ctx context.Context) error {
 func (bm *botManager) startEnabled(ctx context.Context) {
 	ids := bm.listIDs(true)
 	for _, id := range ids {
-		if err := bm.startBot(ctx, id, false); err != nil {
-			log.Printf("start %s: %v", id, err)
+		if err := bm.startBot(ctx, id, false, false); err != nil {
+			slog.Error("start bot failed", "id", id, "error", err)
 		}
 	}
 }
 
 func (bm *botManager) listIDs(enabledOnly bool) []string {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
+	bm.mu.RLock() // P0-5: RLock for read-only
+	defer bm.mu.RUnlock()
 
 	ids := make([]string, 0, len(bm.bots))
 	for id, br := range bm.bots {
@@ -314,8 +335,8 @@ func (bm *botManager) listIDs(enabledOnly bool) []string {
 }
 
 func (bm *botManager) ListBots() []api.BotInfo {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
+	bm.mu.RLock() // P0-5: RLock for read-only
+	defer bm.mu.RUnlock()
 
 	infos := make([]api.BotInfo, 0, len(bm.bots))
 	for _, br := range bm.bots {
@@ -328,8 +349,8 @@ func (bm *botManager) ListBots() []api.BotInfo {
 }
 
 func (bm *botManager) GetBot(id string) (*api.BotInfo, error) {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
+	bm.mu.RLock() // P0-5: RLock for read-only
+	defer bm.mu.RUnlock()
 
 	br, ok := bm.bots[id]
 	if !ok {
@@ -343,7 +364,11 @@ func (bm *botManager) GetBot(id string) (*api.BotInfo, error) {
 }
 
 func (bm *botManager) StartBot(ctx context.Context, id string) error {
-	return bm.startBot(ctx, id, true)
+	return bm.startBot(ctx, id, true, false)
+}
+
+func (bm *botManager) StartBotWithOptions(ctx context.Context, id string, disableLLM bool) error {
+	return bm.startBot(ctx, id, true, disableLLM)
 }
 
 func (bm *botManager) StopBot(id string) error {
@@ -351,6 +376,13 @@ func (bm *botManager) StopBot(id string) error {
 }
 
 func (bm *botManager) CreateBot(ctx context.Context, cfg storage.BotConfig) error {
+	// P0-3: Validate Twitch account before creating
+	if bm.helixClient != nil {
+		if err := bm.helixClient.ValidateAccount(ctx, cfg.TwitchLogin, cfg.Password); err != nil {
+			return fmt.Errorf("account validation failed: %w", err)
+		}
+	}
+
 	if err := bm.store.CreateBot(ctx, cfg); err != nil {
 		return err
 	}
@@ -371,6 +403,41 @@ func (bm *botManager) CreateBot(ctx context.Context, cfg storage.BotConfig) erro
 }
 
 func (bm *botManager) UpdateBot(ctx context.Context, botID string, updates map[string]interface{}) error {
+	// P0-3: Validate account if login or password is being updated
+	if bm.helixClient != nil {
+		var login, password string
+		var needValidation bool
+
+		if v, ok := updates["twitch_login"].(string); ok {
+			login = v
+			needValidation = true
+		}
+		if v, ok := updates["password"].(string); ok {
+			password = v
+			needValidation = true
+		}
+
+		if needValidation {
+			if login == "" || password == "" {
+				// Get current values for missing fields
+				bm.mu.Lock()
+				if br, ok := bm.bots[botID]; ok {
+					if login == "" {
+						login = br.cfg.TwitchLogin
+					}
+					if password == "" {
+						password = br.cfg.Password
+					}
+				}
+				bm.mu.Unlock()
+			}
+
+			if err := bm.helixClient.ValidateAccount(ctx, login, password); err != nil {
+				return fmt.Errorf("account validation failed: %w", err)
+			}
+		}
+	}
+
 	if err := bm.store.UpdateBot(ctx, botID, updates); err != nil {
 		return err
 	}
@@ -432,8 +499,8 @@ func (bm *botManager) DeleteBot(ctx context.Context, botID string) error {
 func (bm *botManager) StartAll(ctx context.Context) error {
 	ids := bm.listIDs(false)
 	for _, id := range ids {
-		if err := bm.startBot(ctx, id, true); err != nil {
-			log.Printf("start %s: %v", id, err)
+		if err := bm.startBot(ctx, id, true, false); err != nil {
+			slog.Error("start bot failed", "id", id, "error", err)
 		}
 	}
 	return nil
@@ -444,7 +511,7 @@ func (bm *botManager) StopAll() error {
 	return nil
 }
 
-func (bm *botManager) startBot(parent context.Context, botID string, persist bool) error {
+func (bm *botManager) startBot(parent context.Context, botID string, persist bool, disableLLM bool) error {
 	bm.mu.Lock()
 	br, ok := bm.bots[botID]
 	if !ok {
@@ -455,6 +522,9 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		bm.mu.Unlock()
 		return nil
 	}
+
+	// Set LLM disable flag
+	br.disableLLM = disableLLM
 
 	targetChannel := normalizeChannelName(br.cfg.CurrentChannel)
 	if targetChannel == "" {
@@ -474,7 +544,12 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		return fmt.Errorf("failed to connect to Twitch IRC: %w", err)
 	}
 
+	// P0-1: Reset graceful shutdown state
+	br.stopping = false
+	br.stopped = make(chan struct{}, 1)
+
 	ctx, cancel := context.WithCancel(parent)
+	br.ctx = ctx
 	br.cancel = cancel
 	br.running = true
 	br.cfg.Enabled = true
@@ -487,8 +562,22 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		}
 	}
 
-	go bm.runBotLoop(ctx, br)
 	return nil
+}
+
+func (bm *botManager) stopAudio() {
+	bm.mu.Lock()
+	enabled := bm.audioService != nil
+	if bm.audioCancel != nil {
+		bm.audioCancel()
+		bm.audioCancel = nil
+	}
+	bm.audioService = nil
+	bm.mu.Unlock()
+
+	if enabled {
+		slog.Info("Audio context service disabled")
+	}
 }
 
 func (bm *botManager) stopBot(botID string, persist bool) error {
@@ -498,6 +587,16 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 		bm.mu.Unlock()
 		return fmt.Errorf("bot not found: %s", botID)
 	}
+
+	// P0-1: Graceful shutdown - set stopping flag and wait for loop to finish
+	br.stopping = true
+
+	// Create channel if not exists (for first stop)
+	if br.stopped == nil {
+		br.stopped = make(chan struct{}, 1)
+	}
+
+	// Cancel context to signal the loop to stop
 	if br.cancel != nil {
 		br.cancel()
 	}
@@ -506,6 +605,15 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 	br.cfg.Enabled = false
 	br.client.Close()
 	bm.mu.Unlock()
+
+	// P0-1: Wait for graceful shutdown with timeout
+	gracefulTimeout := 10 * time.Second
+	select {
+	case <-br.stopped:
+		slog.Info("graceful shutdown completed", "bot_id", botID)
+	case <-time.After(gracefulTimeout):
+		slog.Warn("graceful shutdown timeout, forcing stop", "bot_id", botID)
+	}
 
 	if persist {
 		return bm.store.SetBotEnabled(context.Background(), botID, false)
@@ -521,8 +629,8 @@ func (bm *botManager) stopAll() {
 }
 
 func (bm *botManager) statusLines() []string {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
+	bm.mu.RLock() // P0-5: RLock for read-only
+	defer bm.mu.RUnlock()
 
 	lines := make([]string, 0, len(bm.bots))
 	for _, br := range bm.bots {
@@ -536,17 +644,45 @@ func (bm *botManager) statusLines() []string {
 }
 
 func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
-	log.Printf("[%s] started", br.cfg.ID)
+	slog.Info("bot started", "bot_id", br.cfg.ID)
 	bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot started", nil)
 
+	// P0-1: Graceful shutdown - ensure we signal when done
 	defer func() {
-		log.Printf("[%s] stopped", br.cfg.ID)
-		bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot stopped", nil)
+		// P0-1: Wait for any pending message to be sent (up to configured delay)
+		if br.cfg.MinDelaySec > 0 {
+			slog.Info("waiting for pending operations before graceful stop", "bot_id", br.cfg.ID)
+			time.Sleep(time.Duration(br.cfg.MinDelaySec) * time.Second)
+		}
+
+		// P0-1: Log reason for stopping
+		reason := "stopped"
+		if br.stopping {
+			reason = "stopped gracefully (user request)"
+		}
+
+		slog.Info("bot stopped", "bot_id", br.cfg.ID, "reason", reason)
+		bm.logBotEvent(br.cfg.ID, "lifecycle", "info", reason, nil)
+
+		// P0-1: Signal that bot has fully stopped
+		if br.stopped != nil {
+			close(br.stopped)
+			br.stopped = nil
+		}
 	}()
 
 	consecutiveErrors := 0
 
 	for {
+		// P0-1: Check stopping flag for graceful shutdown
+		bm.mu.Lock()
+		shouldStop := br.stopping
+		bm.mu.Unlock()
+
+		if shouldStop {
+			return
+		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -564,20 +700,20 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 
 		// Проверка и переподключение IRC если нужно
 		if !br.client.IsConnected() {
-			log.Printf("[%s] IRC disconnected, reconnecting...", br.cfg.ID)
+			slog.Warn("IRC disconnected, reconnecting...", "bot_id", br.cfg.ID)
 			bm.logBotEvent(br.cfg.ID, "error", "warning", "IRC disconnected, reconnecting...", nil)
 
 			if err := br.client.Reconnect(); err != nil {
-				log.Printf("[%s] reconnect failed: %v", br.cfg.ID, err)
+				slog.Error("reconnect failed", "bot_id", br.cfg.ID, "error", err)
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
-					log.Printf("[%s] too many errors, stopping bot", br.cfg.ID)
+					slog.Error("too many errors, stopping bot", "bot_id", br.cfg.ID)
 					return
 				}
 				time.Sleep(errorRetryDelay)
 				continue
 			}
-			log.Printf("[%s] reconnected successfully", br.cfg.ID)
+			slog.Info("reconnected successfully", "bot_id", br.cfg.ID)
 			bm.logBotEvent(br.cfg.ID, "lifecycle", "success", "Reconnected successfully", nil)
 			consecutiveErrors = 0
 		}
@@ -598,21 +734,29 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 
 		now := time.Now()
 		if !bm.globalLimiter.allow(now) {
-			log.Printf("[%s] global limit reached, skip", br.cfg.ID)
+			slog.Warn("global limit reached, skip", "bot_id", br.cfg.ID)
 			bm.logBotEvent(br.cfg.ID, "rate_limit", "warning", "Global rate limit reached", nil)
+			continue
+		}
+
+		// Если LLM отключен, пропускаем генерацию и отправку
+		if br.disableLLM {
+			slog.Info("LLM disabled, skipping message generation", "bot_id", br.cfg.ID)
+			bm.logBotEvent(br.cfg.ID, "llm", "info", "LLM disabled, bot in monitor-only mode", nil)
+			time.Sleep(time.Duration(rand.Intn(br.cfg.MaxDelaySec-br.cfg.MinDelaySec)+br.cfg.MinDelaySec) * time.Second)
 			continue
 		}
 
 		msg, sttContext, err := bm.generateMessage(ctx, br.cfg.Personality)
 		if err != nil {
-			log.Printf("[%s] llm error: %v", br.cfg.ID, err)
+			slog.Error("llm error", "bot_id", br.cfg.ID, "error", err)
 			bm.logBotEvent(br.cfg.ID, "llm", "error", "LLM generation failed", map[string]interface{}{
 				"error":       err.Error(),
 				"personality": br.cfg.Personality,
 			})
 			consecutiveErrors++
 			if consecutiveErrors >= maxConsecutiveErrors {
-				log.Printf("[%s] too many LLM errors, stopping bot", br.cfg.ID)
+				slog.Error("too many LLM errors, stopping bot", "bot_id", br.cfg.ID)
 				return
 			}
 			continue
@@ -621,7 +765,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		// Успешная генерация - сбрасываем счетчик ошибок и обновляем время
 		consecutiveErrors = 0
 		br.lastSent = now
-		log.Printf("[%s|%s] %s", br.cfg.ID, br.cfg.Personality, msg)
+		slog.Info("message sent", "bot_id", br.cfg.ID, "personality", br.cfg.Personality, "message", msg)
 
 		// Логируем и отправляем через WebSocket ДО отправки в Twitch
 		contextData := map[string]interface{}{
@@ -646,20 +790,34 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			bm.apiHub.BroadcastBotMessage(br.cfg.ID, msg, br.cfg.Personality, normalizeChannelName(br.cfg.CurrentChannel))
 		}
 
+		// P0-2: Check and wait for rate limits before sending
+		br.client.WaitForRateLimit()
+
 		// В режиме отладки не отправляем сообщения в реальный чат
 		if !bm.debugMode {
 			if err := br.client.SendMessage(msg); err != nil {
-				log.Printf("[%s] twitch send error: %v", br.cfg.ID, err)
+				slog.Error("twitch send error", "bot_id", br.cfg.ID, "error", err)
+
+				// P0-2: Check if rate limited
+				if strings.Contains(err.Error(), "rate limited") {
+					bm.logBotEvent(br.cfg.ID, "rate_limit", "warning", "Twitch rate limit reached", map[string]interface{}{
+						"error": err.Error(),
+					})
+					// Don't count rate limit as error, just wait and continue
+					time.Sleep(5 * time.Second)
+					continue
+				}
+
 				br.client.Close()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
-					log.Printf("[%s] too many send errors, stopping bot", br.cfg.ID)
+					slog.Error("too many send errors, stopping bot", "bot_id", br.cfg.ID)
 					return
 				}
 				continue
 			}
 		} else {
-			log.Printf("[%s] DEBUG MODE: message not sent to Twitch", br.cfg.ID)
+			slog.Info("DEBUG MODE: message not sent to Twitch", "bot_id", br.cfg.ID)
 		}
 	}
 }
@@ -692,7 +850,7 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 
 		info, err := helixClient.GetStreamInfo(infoCtx, channel)
 		if err != nil {
-			log.Printf("[Helix] Failed to get stream info: %v", err)
+			slog.Error("Failed to get stream info", "error", err)
 		} else {
 			streamInfo = info
 		}
@@ -734,11 +892,15 @@ func (bm *botManager) generateMessage(ctx context.Context, personality string) (
 	defer cancel()
 
 	// Проверка доступности LLM перед генерацией
-	if bm.llmClient == nil {
+	bm.mu.RLock() // P0-5: RLock for read-only
+	llmClient := bm.llmClient
+	bm.mu.RUnlock()
+
+	if llmClient == nil {
 		return "", "", fmt.Errorf("LLM client not initialized")
 	}
 
-	msg, err := bm.llmClient.Generate(llmCtx, systemPrompt, userPrompt, maxTokens)
+	msg, err := llmClient.Generate(llmCtx, systemPrompt, userPrompt, maxTokens)
 	if err != nil {
 		return "", "", fmt.Errorf("generate message for %s: %w", personality, err)
 	}
@@ -762,7 +924,7 @@ func randomDelay(minSec, maxSec int) time.Duration {
 // startRotation запускает горутину для периодической ротации ботов между каналами
 func (bm *botManager) startRotation(ctx context.Context, channels []string, intervalMinutes int) {
 	if len(channels) < 2 || intervalMinutes <= 0 {
-		log.Printf("Rotation disabled: need at least 2 channels and positive interval")
+		slog.Warn("Rotation disabled: need at least 2 channels and positive interval")
 		return
 	}
 
@@ -772,7 +934,7 @@ func (bm *botManager) startRotation(ctx context.Context, channels []string, inte
 	bm.rotationCancel = cancel
 	bm.mu.Unlock()
 
-	log.Printf("Starting bot rotation: %d channels, interval %d minutes", len(channels), intervalMinutes)
+	slog.Info("Starting bot rotation", "channels", len(channels), "interval_minutes", intervalMinutes)
 
 	go func() {
 		ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
@@ -781,7 +943,7 @@ func (bm *botManager) startRotation(ctx context.Context, channels []string, inte
 		for {
 			select {
 			case <-rotationCtx.Done():
-				log.Printf("Bot rotation stopped")
+				slog.Info("Bot rotation stopped")
 				return
 			case <-ticker.C:
 				bm.rotateBots(ctx, channels)
@@ -814,11 +976,11 @@ func (bm *botManager) startAudio(ctx context.Context) error {
 
 	// Добавляем callback для отправки контекста через WebSocket
 	cfg.OnContextUpdate = func(context string) {
-		log.Printf("[audio] Broadcasting context update: %d chars", len(context))
+		slog.Info("Broadcasting context update", "chars", len(context))
 		if hub != nil {
 			hub.BroadcastAudioContext(context)
 		} else {
-			log.Printf("[audio] Hub is nil, cannot broadcast")
+			slog.Warn("Hub is nil, cannot broadcast")
 		}
 	}
 
@@ -834,23 +996,8 @@ func (bm *botManager) startAudio(ctx context.Context) error {
 	bm.audioCancel = cancel
 	bm.mu.Unlock()
 
-	log.Printf("Audio context service enabled (channel: %s)", cfg.Channel)
+	slog.Info("Audio context service enabled", "channel", cfg.Channel)
 	return nil
-}
-
-func (bm *botManager) stopAudio() {
-	bm.mu.Lock()
-	enabled := bm.audioService != nil
-	if bm.audioCancel != nil {
-		bm.audioCancel()
-		bm.audioCancel = nil
-	}
-	bm.audioService = nil
-	bm.mu.Unlock()
-
-	if enabled {
-		log.Printf("Audio context service disabled")
-	}
 }
 
 func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Settings) error {
@@ -865,8 +1012,7 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 
 	// Пересоздать LLM клиент если настройки изменились
 	if settings.LLMProvider != "" && settings.LLMApiURL != "" {
-		log.Printf("[LLM] Initializing client: provider=%s, model=%s, url=%s",
-			settings.LLMProvider, settings.LLMModel, settings.LLMApiURL)
+		slog.Info("Initializing LLM client", "provider", settings.LLMProvider, "model", settings.LLMModel, "url", settings.LLMApiURL)
 
 		newClient := llm.NewClient(
 			settings.LLMApiURL,
@@ -879,14 +1025,13 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 		healthCtx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
 		if err := newClient.HealthCheck(healthCtx); err != nil {
 			cancel()
-			log.Printf("[LLM] Health check failed: %v", err)
+			slog.Error("LLM Health check failed", "error", err)
 			if settings.LLMProvider == "lmstudio" {
-				log.Printf("[LLM] Make sure LM Studio is running on %s with a model loaded", settings.LLMApiURL)
+				slog.Warn("Make sure LM Studio is running with a model loaded", "url", settings.LLMApiURL)
 			}
 		} else {
 			cancel()
-			log.Printf("[LLM] Client ready: provider=%s, model=%s",
-				settings.LLMProvider, settings.LLMModel)
+			slog.Info("LLM Client ready", "provider", settings.LLMProvider, "model", settings.LLMModel)
 		}
 
 		bm.mu.Lock()
@@ -900,14 +1045,14 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 		if bm.helixClient == nil {
 			bm.helixClient = twitch.NewHelixClient(settings.TwitchClientID, settings.TwitchClientSecret)
 			if bm.helixClient != nil {
-				log.Printf("Twitch Helix API client initialized from settings")
+				slog.Info("Twitch Helix API client initialized from settings")
 			}
 		}
 		bm.mu.Unlock()
 	} else {
 		bm.mu.Lock()
 		if bm.helixClient != nil {
-			log.Printf("Twitch API credentials removed, disabling Helix client")
+			slog.Info("Twitch API credentials removed, disabling Helix client")
 		}
 		bm.helixClient = nil
 		bm.mu.Unlock()
@@ -937,7 +1082,7 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	bm.mu.Unlock()
 
 	if primaryChanged {
-		log.Printf("Primary Twitch channel set from UI settings: %s", primaryChannel)
+		slog.Info("Primary Twitch channel set from UI settings", "channel", primaryChannel)
 	}
 
 	if settings.RotationEnabled && len(settings.Channels) > 1 {
@@ -980,7 +1125,7 @@ func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
 		return
 	}
 
-	log.Printf("Rotating %d bots across %d channels", len(runningBots), len(channels))
+	slog.Info("Rotating bots", "bots", len(runningBots), "channels", len(channels))
 
 	for _, br := range runningBots {
 		// Выбираем случайный канал
@@ -988,13 +1133,13 @@ func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
 
 		// Останавливаем бота
 		if err := bm.stopBot(br.cfg.ID, false); err != nil {
-			log.Printf("Failed to stop bot %s for rotation: %v", br.cfg.ID, err)
+			slog.Error("Failed to stop bot for rotation", "bot_id", br.cfg.ID, "error", err)
 			continue
 		}
 
 		// Обновляем канал в БД
 		if err := bm.store.UpdateBotChannel(ctx, br.cfg.ID, newChannel); err != nil {
-			log.Printf("Failed to update channel for bot %s: %v", br.cfg.ID, err)
+			slog.Error("Failed to update channel", "bot_id", br.cfg.ID, "error", err)
 			continue
 		}
 
@@ -1005,12 +1150,12 @@ func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
 		bm.mu.Unlock()
 
 		// Запускаем бота на новом канале
-		if err := bm.startBot(ctx, br.cfg.ID, false); err != nil {
-			log.Printf("Failed to restart bot %s on channel %s: %v", br.cfg.ID, newChannel, err)
+		if err := bm.startBot(ctx, br.cfg.ID, false, false); err != nil {
+			slog.Error("Failed to restart bot on channel", "bot_id", br.cfg.ID, "channel", newChannel, "error", err)
 			continue
 		}
 
-		log.Printf("Bot %s rotated to channel %s", br.cfg.ID, newChannel)
+		slog.Info("Bot rotated to channel", "bot_id", br.cfg.ID, "channel", newChannel)
 	}
 }
 
@@ -1018,20 +1163,20 @@ func runLogCleanupJob(ctx context.Context, store *storage.Store) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
-	log.Printf("Log cleanup job started (runs every 1 hour)")
+	slog.Info("Log cleanup job started (runs every 1 hour)")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Log cleanup job stopped")
+			slog.Info("Log cleanup job stopped")
 			return
 		case <-ticker.C:
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 			if err := store.CleanupOldLogs(cleanupCtx); err != nil {
-				log.Printf("Log cleanup failed: %v", err)
+				slog.Error("Log cleanup failed", "error", err)
 			} else {
-				log.Printf("Log cleanup completed successfully")
+				slog.Info("Log cleanup completed successfully")
 			}
 
 			cancel()
@@ -1096,7 +1241,7 @@ func runConsole(ctx context.Context, bm *botManager) {
 				fmt.Println("usage: start <id>")
 				continue
 			}
-			if err := bm.startBot(ctx, parts[1], true); err != nil {
+			if err := bm.startBot(ctx, parts[1], true, false); err != nil {
 				fmt.Println("error:", err)
 				continue
 			}
@@ -1113,14 +1258,14 @@ func runConsole(ctx context.Context, bm *botManager) {
 			fmt.Println("stopped", parts[1])
 		case "start-all":
 			for _, id := range bm.listIDs(false) {
-				if err := bm.startBot(ctx, id, true); err != nil {
-					fmt.Printf("start %s: %v\n", id, err)
+				if err := bm.startBot(ctx, id, true, false); err != nil {
+					slog.Error("start bot failed", "id", id, "error", err)
 				}
 			}
 		case "stop-all":
 			for _, id := range bm.listIDs(false) {
 				if err := bm.stopBot(id, true); err != nil {
-					fmt.Printf("stop %s: %v\n", id, err)
+					slog.Error("stop bot failed", "id", id, "error", err)
 				}
 			}
 		case "quit", "exit":
@@ -1177,11 +1322,11 @@ func main() {
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	if err := llmClient.HealthCheck(healthCtx); err != nil {
 		healthCancel()
-		log.Printf("Warning: LLM API (%s) is not reachable: %v", llmProvider, err)
-		log.Printf("Backend will start anyway. Configure LLM settings in UI.")
+		slog.Warn("LLM API is not reachable", "provider", llmProvider, "error", err)
+		slog.Info("Backend will start anyway. Configure LLM settings in UI.")
 	} else {
 		healthCancel()
-		log.Printf("LLM API OK (provider: %s, url: %s, model: %s)", llmProvider, llmURL, llmModel)
+		slog.Info("LLM API OK", "provider", llmProvider, "url", llmURL, "model", llmModel)
 	}
 
 	var cacheClient *cache.Client
@@ -1189,10 +1334,10 @@ func main() {
 		var err error
 		cacheClient, err = cache.NewClient(redisURL)
 		if err != nil {
-			log.Printf("Redis connection failed (fallback to in-memory): %v", err)
+			slog.Error("Redis connection failed (fallback to in-memory)", "error", err)
 		} else {
 			defer cacheClient.Close()
-			log.Printf("Redis OK (%s)", redisURL)
+			slog.Info("Redis OK", "url", redisURL)
 		}
 	}
 
@@ -1201,16 +1346,19 @@ func main() {
 
 	store, err := storage.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("postgres connect error: %v", err)
+		slog.Error("postgres connect error", "error", err)
+		os.Exit(1)
 	}
 	defer store.Close()
 
 	if err := store.EnsureSchema(ctx); err != nil {
-		log.Fatalf("ensure schema error: %v", err)
+		slog.Error("ensure schema error", "error", err)
+		os.Exit(1)
 	}
 
 	if err := store.EnsureSettingsTable(ctx); err != nil {
-		log.Fatalf("ensure settings table error: %v", err)
+		slog.Error("ensure settings table error", "error", err)
+		os.Exit(1)
 	}
 
 	// Start background cleanup job for old logs
@@ -1218,13 +1366,13 @@ func main() {
 
 	settings, err := store.GetSettings(ctx)
 	if err != nil {
-		log.Printf("Failed to load settings: %v", err)
+		slog.Error("Failed to load settings", "error", err)
 	}
 
 	channel = primaryChannelFromSettings(settings, channel)
 	audioCfg.Channel = channel
 	if channel == "" {
-		log.Printf("No default channel configured yet. Set Settings -> channels in UI before starting bots.")
+		slog.Warn("No default channel configured yet. Set Settings -> channels in UI before starting bots.")
 	}
 
 	debugMode := false
@@ -1234,11 +1382,12 @@ func main() {
 
 	manager := newBotManager(store, llmClient, cacheClient, nil, ctx, channel, globalLimit, audioCfg, debugMode)
 	if err := manager.loadBots(ctx); err != nil {
-		log.Fatalf("load bots error: %v", err)
+		slog.Error("load bots error", "error", err)
+		os.Exit(1)
 	}
 
 	if len(manager.listIDs(false)) == 0 {
-		log.Printf("no bots found in database; add rows into table bots first")
+		slog.Warn("no bots found in database; add rows into table bots first")
 	}
 
 	apiServer := api.NewServer(manager, store, llmClient, cacheClient, apiKey, apiPort, corsOrigins)
@@ -1246,13 +1395,13 @@ func main() {
 
 	go func() {
 		if err := apiServer.Start(); err != nil {
-			log.Printf("API server error: %v", err)
+			slog.Error("API server error", "error", err)
 		}
 	}()
 
 	// Загружаем настройки и применяем runtime-флаги (ротация, аудио-контекст)
 	if err := manager.ApplySettings(ctx, settings); err != nil {
-		log.Printf("Failed to apply settings: %v", err)
+		slog.Error("Failed to apply settings", "error", err)
 	}
 
 	manager.startEnabled(ctx)

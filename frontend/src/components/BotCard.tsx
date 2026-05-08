@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Bot } from '../api/client'
 import InteractiveHoverButton from './ui/interactive-hover-button'
 import { BotLogsModal } from './BotLogsModal'
+import { LaunchBotModal } from './LaunchBotModal'
 
 interface BotCardProps {
   bot: Bot
@@ -12,6 +13,7 @@ interface BotCardProps {
 export const BotCard = ({ bot, onStart, onStop }: BotCardProps) => {
   const isRunning = bot.status === 'running'
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false)
+  const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false)
 
   return (
     <div className={`bot-card ${isRunning ? 'bot-card--running' : ''}`}>
@@ -48,7 +50,7 @@ export const BotCard = ({ bot, onStart, onStop }: BotCardProps) => {
             text="▶ СТАРТ"
             loadingText="Запуск..."
             successText="Запущен!"
-            onClick={() => onStart(bot.id)}
+            onClick={() => setIsLaunchModalOpen(true)}
             classes="flex-1 bg-primary text-primary-foreground border-primary"
           />
         )}
@@ -66,6 +68,16 @@ export const BotCard = ({ bot, onStart, onStop }: BotCardProps) => {
         botName={bot.name}
         isOpen={isLogsModalOpen}
         onClose={() => setIsLogsModalOpen(false)}
+      />
+
+      <LaunchBotModal
+        isOpen={isLaunchModalOpen}
+        onClose={() => setIsLaunchModalOpen(false)}
+        bot={bot}
+        onStart={() => {
+          setIsLaunchModalOpen(false)
+          onStart(bot.id)
+        }}
       />
     </div>
   )

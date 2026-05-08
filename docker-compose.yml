@@ -1,10 +1,10 @@
-﻿version: "3.9"
-
-services:
+﻿services:
   stt:
     build:
       context: ./stt_server
       dockerfile: Dockerfile
+      args:
+        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
     container_name: twitch-bot-stt
     restart: unless-stopped
     ports:
@@ -59,6 +59,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
     container_name: twitch-bot-backend
     restart: unless-stopped
     ports:
@@ -103,6 +105,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
+        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
         - VITE_API_URL=http://localhost:8080
         - VITE_WS_URL=ws://localhost:8080
         - VITE_API_KEY=${API_KEY:-secret-api-key-12345}

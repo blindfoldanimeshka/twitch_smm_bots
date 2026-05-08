@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nicklaw5/helix/v2"
 )
+
+// P0-3: Login validation regex
+var validLoginRegex = regexp.MustCompile(`^[a-z0-9_]{3,25}$`)
 
 type HelixClient struct {
 	client      *helix.Client
@@ -80,7 +84,7 @@ func (h *HelixClient) ensureToken(ctx context.Context) error {
 }
 
 func (h *HelixClient) GetStreamInfo(ctx context.Context, channelLogin string) (*StreamInfo, error) {
-	if h == nil {
+	if h == nil || h.client == nil {
 		return nil, fmt.Errorf("helix client is nil")
 	}
 
@@ -129,8 +133,67 @@ func (h *HelixClient) GetStreamInfo(ctx context.Context, channelLogin string) (*
 	return info, nil
 }
 
+// P0-3: Validate Twitch account
+// Returns nil error if account is valid, or error with description
+func (h *HelixClient) ValidateAccount(ctx context.Context, login, oauthToken string) error {
+	// 1. Validate login format
+	login = strings.TrimPrefix(strings.ToLower(login), "#")
+	if !validLoginRegex.MatchString(login) {
+		return fmt.Errorf("invalid Twitch login format: must be 3-25 characters (a-z, 0-9, _)")
+	}
+
+	// 2. Validate OAuth token by making a test API call
+	if oauthToken != "" {
+		// Create a temporary client with the user's token
+		testClient, err := helix.NewClient(&helix.Options{
+			ClientID:     h.clientID,
+			ClientSecret: h.clientSecret,
+			UserAccessToken: oauthToken,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create test client: %w", err)
+		}
+
+		// Try to get users with the token to validate it
+		resp, err := testClient.GetUsers(&helix.UsersParams{})
+		if err != nil {
+			return fmt.Errorf("OAuth token validation failed: %w", err)
+		}
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			return fmt.Errorf("invalid OAuth token: authentication failed (status %d)", resp.StatusCode)
+		}
+	}
+
+	// 3. Check if account exists
+	if err := h.ensureToken(ctx); err != nil {
+		return fmt.Errorf("failed to ensure app token: %w", err)
+	}
+
+	usersResp, err := h.client.GetUsers(&helix.UsersParams{
+		Logins: []string{login},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+	if len(usersResp.Data.Users) == 0 {
+		return fmt.Errorf("Twitch account '%s' does not exist", login)
+	}
+
+	log.Printf("[Helix] Account '%s' validated successfully (ID: %s)", login, usersResp.Data.Users[0].ID)
+	return nil
+}
+
+// P0-3: Validate login format only
+func ValidateLogin(login string) error {
+	login = strings.TrimPrefix(strings.ToLower(login), "#")
+	if !validLoginRegex.MatchString(login) {
+		return fmt.Errorf("invalid Twitch login format: must be 3-25 characters (a-z, 0-9, _)")
+	}
+	return nil
+}
+
 func (h *HelixClient) GetChannelInfo(ctx context.Context, channelLogin string) (*StreamInfo, error) {
-	if h == nil {
+	if h == nil || h.client == nil {
 		return nil, fmt.Errorf("helix client is nil")
 	}
 

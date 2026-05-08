@@ -5,6 +5,8 @@
 *.dylib
 bot-test.exe
 bot-improved.exe
+bot_temp
+bot_temp.*
 
 # Test binary, built with `go test -c`
 *.test

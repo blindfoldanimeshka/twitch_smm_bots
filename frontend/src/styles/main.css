@@ -80,6 +80,30 @@ body {
   overflow-x: hidden;
 }
 
+/* Fix cursor visibility when TargetCursor sets body cursor to none */
+input,
+textarea {
+  cursor: text !important;
+}
+
+select,
+button:not(:disabled),
+a,
+.cursor-pointer {
+  cursor: pointer !important;
+}
+
+button:disabled,
+[disabled] {
+  cursor: not-allowed !important;
+}
+
+/* Modal overlays and backdrops */
+.modal-backdrop,
+[role="dialog"] > div:first-child {
+  cursor: default !important;
+}
+
 .app {
   position: relative;
   z-index: 1;

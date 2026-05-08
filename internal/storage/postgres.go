@@ -249,6 +249,13 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
 	defer cancel()
 
+	// P0-4: Use transaction for ACID guarantees
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	query := "UPDATE bots SET "
 	args := make([]interface{}, 0, len(updates)+1)
 	i := 1
@@ -256,6 +263,7 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 	for key, val := range updates {
 		// Проверяем, что колонка в whitelist
 		if !allowedColumns[key] {
+			tx.Rollback(ctx)
 			return fmt.Errorf("invalid column name: %s", key)
 		}
 
@@ -270,13 +278,21 @@ func (s *Store) UpdateBot(ctx context.Context, botID string, updates map[string]
 	query += fmt.Sprintf(" WHERE id = $%d", i)
 	args = append(args, botID)
 
-	cmd, err := s.pool.Exec(ctx, query, args...)
+	cmd, err := tx.Exec(ctx, query, args...)
 	if err != nil {
+		tx.Rollback(ctx)
 		return fmt.Errorf("update bot: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
+		tx.Rollback(ctx)
 		return fmt.Errorf("bot not found: %s", botID)
 	}
+
+	// P0-4: Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
 	return nil
 }
 

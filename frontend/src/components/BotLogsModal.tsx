@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useWebSocket, type WSMessage } from '../hooks/useWebSocket'
 import { api } from '../api/client'
@@ -18,81 +19,6 @@ interface ChatMessage {
   confidence?: number
 }
 
-function WarpAnimations() {
-  const enterDuration = 0.5
-  const exitDuration = 0.25
-  return (
-    <>
-      <motion.div
-        className="absolute rounded-full h-1/2 w-1/2 blur-lg origin-center will-change-transform left-[25%] top-[100%]"
-        initial={{
-          scale: 0,
-          opacity: 1,
-          backgroundColor: 'hsl(280, 64%, 77%)',
-        }}
-        animate={{
-          scale: 10,
-          opacity: 0.2,
-          backgroundColor: 'hsl(270, 93%, 56%)',
-          transition: {
-            duration: enterDuration,
-            opacity: { duration: enterDuration, ease: 'easeInOut' },
-          },
-        }}
-        exit={{
-          scale: 0,
-          opacity: 1,
-          backgroundColor: 'hsl(280, 64%, 77%)',
-          transition: { duration: exitDuration },
-        }}
-      />
-      <motion.div
-        className="absolute blur-[100px] rounded-full bg-purple-500/90 h-full w-full top-[-25%] left-[-50%]"
-        initial={{ opacity: 0 }}
-        animate={{
-          opacity: 0.9,
-          transition: {
-            duration: enterDuration,
-            scale: {
-              duration: 15,
-              repeat: Infinity,
-              repeatType: 'loop',
-              ease: 'easeInOut',
-              delay: 0.35,
-            },
-          },
-          scale: [1, 0.7, 1],
-        }}
-        exit={{
-          opacity: 0,
-          transition: { duration: exitDuration },
-        }}
-      />
-      <motion.div
-        className="absolute blur-[100px] rounded-full bg-purple-500/80 w-full h-full top-[25%] left-[50%]"
-        initial={{ opacity: 0 }}
-        animate={{
-          opacity: 0.9,
-          transition: {
-            duration: enterDuration,
-            scale: {
-              duration: 15,
-              repeat: Infinity,
-              repeatType: 'loop',
-              ease: 'easeInOut',
-              delay: 0.35,
-            },
-          },
-          scale: [1, 0.7, 1],
-        }}
-        exit={{
-          opacity: 0,
-          transition: { duration: exitDuration },
-        }}
-      />
-    </>
-  )
-}
 
 export const BotLogsModal: React.FC<BotLogsModalProps> = ({
   botId,
@@ -187,67 +113,85 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
   const sttCount = chatMessages.filter(m => m.type === 'stt').length
   const llmCount = chatMessages.filter(m => m.type === 'llm').length
 
-  return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="absolute">
-          <div className="fixed inset-0 z-50 bg-purple-500/10">
-            <WarpAnimations />
-          </div>
+  if (!isOpen) return null
 
+  return createPortal(
+    <AnimatePresence mode="wait">
+      {isOpen && (
+        <>
+          {/* Backdrop with blur */}
           <motion.div
             onClick={onClose}
-            className="fixed inset-0 flex items-center justify-center z-[1000]"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: [0.59, 0, 0.35, 1] }}
-          >
+            className="fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm cursor-pointer"
+            initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
+            animate={{
+              opacity: 1,
+              backdropFilter: 'blur(8px)',
+              transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+            }}
+            exit={{
+              opacity: 0,
+              backdropFilter: 'blur(0px)',
+              transition: { duration: 0.2, ease: [0.16, 1, 0.3, 1] }
+            }}
+          />
+
+          {/* Modal Container */}
+          <div className="fixed inset-0 z-[10001] flex items-center justify-center pointer-events-none">
             <motion.div
-              className="relative flex gap-4 w-[90vw] h-[80vh] max-w-[1400px]"
+              className="relative flex gap-4 w-[90vw] h-[80vh] max-w-[1400px] pointer-events-auto cursor-default"
               onClick={(e) => e.stopPropagation()}
               initial={{
-                rotateX: -5,
-                skewY: -1.5,
-                scaleY: 2,
-                scaleX: 0.4,
-                y: 100,
+                opacity: 0,
+                scale: 0.92,
+                y: 40,
+                rotateX: 8
               }}
               animate={{
-                rotateX: 0,
-                skewY: 0,
-                scaleY: 1,
-                scaleX: 1,
+                opacity: 1,
+                scale: 1,
                 y: 0,
+                rotateX: 0,
                 transition: {
-                  duration: 0.35,
-                  ease: [0.59, 0, 0.35, 1],
-                  y: { type: 'spring', visualDuration: 0.7, bounce: 0.2 },
-                },
+                  duration: 0.4,
+                  ease: [0.16, 1, 0.3, 1],
+                  opacity: { duration: 0.3 },
+                  scale: { duration: 0.4 },
+                  y: { duration: 0.4 },
+                  rotateX: { duration: 0.4 }
+                }
               }}
               exit={{
-                rotateX: -5,
-                skewY: -1.5,
-                scaleY: 2,
-                scaleX: 0.4,
-                y: 100,
+                opacity: 0,
+                scale: 0.95,
+                y: 20,
+                transition: {
+                  duration: 0.25,
+                  ease: [0.16, 1, 0.3, 1]
+                }
               }}
-              transition={{ duration: 0.35, ease: [0.59, 0, 0.35, 1] }}
               style={{
-                transformPerspective: 1000,
-                originX: 0.5,
-                originY: 0,
+                willChange: 'transform, opacity',
+                perspective: '1200px',
+                transformStyle: 'preserve-3d'
               }}
             >
               {/* LEFT BLOCK - Messages */}
-              <div
-                className="flex-1 rounded-2xl overflow-hidden"
+              <motion.div
+                className="flex-1 rounded-2xl overflow-hidden cursor-default"
                 style={{
-                  background: 'rgba(15, 15, 20, 0.85)',
-                  backdropFilter: 'blur(20px) saturate(180%)',
-                  border: '1px solid rgba(139, 92, 246, 0.2)',
-                  boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                  background: 'rgba(15, 15, 20, 0.95)',
+                  backdropFilter: 'blur(10px)',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  boxShadow: '0 8px 32px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1) inset',
                 }}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{
+                  opacity: 1,
+                  x: 0,
+                  transition: { delay: 0.1, duration: 0.4, ease: [0.16, 1, 0.3, 1] }
+                }}
+                exit={{ opacity: 0, x: -10 }}
               >
                 <div className="p-6 border-b border-purple-500/20">
                   <h2 className="text-2xl font-bold text-white">💬 STT ↔ LLM ЧАТ</h2>
@@ -266,15 +210,31 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
                       </div>
                     </div>
                   ) : (
-                    chatMessages.map((msg) => (
-                      <div
+                    chatMessages.map((msg, index) => (
+                      <motion.div
                         key={msg.id}
-                        className="rounded-xl p-4"
+                        className="rounded-xl p-4 cursor-default hover:scale-[1.01] transition-transform"
                         style={{
                           background: msg.type === 'stt'
                             ? 'rgba(139, 92, 246, 0.1)'
                             : 'rgba(59, 130, 246, 0.1)',
                           border: `1px solid ${msg.type === 'stt' ? 'rgba(139, 92, 246, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                        }}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                          transition: {
+                            delay: Math.min(index * 0.03, 0.5),
+                            duration: 0.3,
+                            ease: [0.16, 1, 0.3, 1]
+                          }
+                        }}
+                        whileHover={{
+                          boxShadow: msg.type === 'stt'
+                            ? '0 4px 20px rgba(139, 92, 246, 0.2)'
+                            : '0 4px 20px rgba(59, 130, 246, 0.2)',
+                          transition: { duration: 0.2 }
                         }}
                       >
                         <div className="flex items-center gap-2 mb-2">
@@ -292,24 +252,32 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
                             Уверенность: {(msg.confidence * 100).toFixed(0)}%
                           </div>
                         )}
-                      </div>
+                      </motion.div>
                     ))
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-              </div>
+              </motion.div>
 
               {/* RIGHT COLUMN */}
               <div className="flex flex-col gap-4 w-[350px]">
                 {/* TOP RIGHT - Bot Info */}
-                <div
-                  className="rounded-2xl p-6 flex-1"
+                <motion.div
+                  className="rounded-2xl p-6 flex-1 cursor-default"
                   style={{
-                    background: 'rgba(15, 15, 20, 0.85)',
-                    backdropFilter: 'blur(20px) saturate(180%)',
-                    border: '1px solid rgba(139, 92, 246, 0.2)',
-                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                    background: 'rgba(15, 15, 20, 0.95)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(139, 92, 246, 0.3)',
+                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1) inset',
                   }}
+                  initial={{ opacity: 0, x: 20, y: -10 }}
+                  animate={{
+                    opacity: 1,
+                    x: 0,
+                    y: 0,
+                    transition: { delay: 0.15, duration: 0.4, ease: [0.16, 1, 0.3, 1] }
+                  }}
+                  exit={{ opacity: 0, x: 10 }}
                 >
                   <h3 className="text-lg font-bold text-white mb-4">ИНФОРМАЦИЯ О БОТЕ</h3>
                   <div className="space-y-3">
@@ -326,17 +294,25 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
                       <div className="text-white font-mono">@{botName.toLowerCase()}</div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* BOTTOM RIGHT - Stats */}
-                <div
-                  className="rounded-2xl p-6 flex-1"
+                <motion.div
+                  className="rounded-2xl p-6 flex-1 cursor-default"
                   style={{
-                    background: 'rgba(15, 15, 20, 0.85)',
-                    backdropFilter: 'blur(20px) saturate(180%)',
-                    border: '1px solid rgba(139, 92, 246, 0.2)',
-                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.15)',
+                    background: 'rgba(15, 15, 20, 0.95)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(139, 92, 246, 0.3)',
+                    boxShadow: '0 8px 32px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1) inset',
                   }}
+                  initial={{ opacity: 0, x: 20, y: 10 }}
+                  animate={{
+                    opacity: 1,
+                    x: 0,
+                    y: 0,
+                    transition: { delay: 0.2, duration: 0.4, ease: [0.16, 1, 0.3, 1] }
+                  }}
+                  exit={{ opacity: 0, x: 10 }}
                 >
                   <h3 className="text-lg font-bold text-white mb-4">СТАТИСТИКА</h3>
                   <div className="space-y-4">
@@ -353,24 +329,43 @@ export const BotLogsModal: React.FC<BotLogsModalProps> = ({
                       <div className="text-3xl font-bold text-white">{chatMessages.length}</div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Close Button */}
-              <button
+              <motion.button
                 onClick={onClose}
-                className="absolute -top-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl hover:scale-110 transition-transform"
+                className="absolute -top-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl transition-all cursor-pointer hover:scale-110 active:scale-95"
                 style={{
                   background: 'rgba(139, 92, 246, 0.9)',
                   boxShadow: '0 4px 16px rgba(139, 92, 246, 0.4)',
                 }}
+                initial={{ opacity: 0, scale: 0, rotate: -180 }}
+                animate={{
+                  opacity: 1,
+                  scale: 1,
+                  rotate: 0,
+                  transition: { delay: 0.25, duration: 0.4, ease: [0.16, 1, 0.3, 1] }
+                }}
+                exit={{
+                  opacity: 0,
+                  scale: 0,
+                  rotate: 180,
+                  transition: { duration: 0.2 }
+                }}
+                whileHover={{
+                  boxShadow: '0 6px 24px rgba(139, 92, 246, 0.6)',
+                  transition: { duration: 0.2 }
+                }}
+                whileTap={{ scale: 0.9 }}
               >
                 ✕
-              </button>
+              </motion.button>
             </motion.div>
-          </motion.div>
-        </div>
+          </div>
+        </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   )
 }

@@ -1,4 +1,5 @@
-FROM node:20-alpine AS builder
+ARG BASE_IMAGE_PREFIX=
+FROM ${BASE_IMAGE_PREFIX}node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -23,7 +24,7 @@ ENV VITE_API_KEY=$VITE_API_KEY
 RUN npm run build
 
 # Production образ с nginx
-FROM nginx:alpine
+FROM ${BASE_IMAGE_PREFIX}nginx:alpine
 
 # Копируем собранные файлы
 COPY --from=builder /app/dist /usr/share/nginx/html

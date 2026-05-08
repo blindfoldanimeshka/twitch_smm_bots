@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface AudioTestModalProps {
@@ -76,133 +77,239 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
     }
   }
 
-  return (
-    <AnimatePresence>
+  if (!isOpen) return null
+
+  return createPortal(
+    <AnimatePresence mode="wait">
       {isOpen && (
-        <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: 'var(--space-6)'
-        }}
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.9, opacity: 0 }}
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            backgroundColor: 'var(--bg-primary)',
-            border: '1px solid var(--neon-green)',
-            borderRadius: '8px',
-            padding: 'var(--space-6)',
-            maxWidth: '800px',
-            width: '100%',
-            maxHeight: '80vh',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 0 20px rgba(0, 255, 136, 0.3)'
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--neon-green)' }}>
-              🎤 ТЕСТ ТРАНСКРИПЦИИ
-            </h2>
-            <button
-              onClick={onClose}
-              className="btn ghost cursor-target"
-              style={{ padding: 'var(--space-2) var(--space-4)' }}
-            >
-              ✕ ЗАКРЫТЬ
-            </button>
-          </div>
-
-          <div style={{ marginBottom: 'var(--space-4)' }}>
-            <p style={{ color: 'var(--text-secondary)' }}>
-              Канал: <strong style={{ color: 'var(--text-primary)' }}>{channel || 'не указан'}</strong>
-            </p>
-            <p style={{ color: 'var(--text-secondary)', marginTop: 'var(--space-2)' }}>
-              Статус: {' '}
-              {status === 'connecting' && <span style={{ color: 'var(--neon-yellow)' }}>⟳ Подключение...</span>}
-              {status === 'connected' && <span style={{ color: 'var(--neon-green)' }}>✓ Подключено</span>}
-              {status === 'error' && <span style={{ color: 'var(--neon-red)' }}>✗ Ошибка подключения</span>}
-            </p>
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              backgroundColor: 'rgba(0, 0, 0, 0.3)',
-              border: '1px solid var(--border-primary)',
-              borderRadius: '4px',
-              padding: 'var(--space-4)',
-              fontFamily: 'monospace',
-              fontSize: '0.9rem',
-              lineHeight: '1.6',
-              marginBottom: 'var(--space-4)'
+        <>
+          {/* Backdrop */}
+          <motion.div
+            onClick={onClose}
+            className="fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm cursor-pointer"
+            initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
+            animate={{
+              opacity: 1,
+              backdropFilter: 'blur(8px)',
+              transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
             }}
-          >
+            exit={{
+              opacity: 0,
+              backdropFilter: 'blur(0px)',
+              transition: { duration: 0.2, ease: [0.16, 1, 0.3, 1] }
+            }}
+          />
+
+          {/* Modal Container */}
+          <div className="fixed inset-0 z-[10001] flex items-center justify-center pointer-events-none p-6">
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              className="pointer-events-auto cursor-default"
+              initial={{
+                opacity: 0,
+                scale: 0.92,
+                y: 40,
+                rotateX: 8
+              }}
+              animate={{
+                opacity: 1,
+                scale: 1,
+                y: 0,
+                rotateX: 0,
+                transition: {
+                  duration: 0.4,
+                  ease: [0.16, 1, 0.3, 1]
+                }
+              }}
+              exit={{
+                opacity: 0,
+                scale: 0.95,
+                y: 20,
+                transition: {
+                  duration: 0.25,
+                  ease: [0.16, 1, 0.3, 1]
+                }
+              }}
+              style={{
+                willChange: 'transform, opacity',
+                perspective: '1200px',
+                transformStyle: 'preserve-3d',
+                backgroundColor: 'rgba(15, 15, 20, 0.95)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(139, 92, 246, 0.3)',
+                borderRadius: '16px',
+                padding: '24px',
+                maxWidth: '800px',
+                width: '100%',
+                maxHeight: '80vh',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 8px 32px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1) inset'
+              }}
+            >
+              {/* Header */}
+              <motion.div
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  transition: { delay: 0.1, duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+                }}
+              >
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: '#8b5cf6' }}>
+                  🎤 ТЕСТ ТРАНСКРИПЦИИ
+                </h2>
+                <motion.button
+                  onClick={onClose}
+                  className="cursor-pointer"
+                  style={{
+                    background: 'rgba(139, 92, 246, 0.2)',
+                    border: '1px solid rgba(139, 92, 246, 0.4)',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    color: '#fff',
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  whileHover={{
+                    background: 'rgba(139, 92, 246, 0.3)',
+                    scale: 1.05
+                  }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  ✕ ЗАКРЫТЬ
+                </motion.button>
+              </motion.div>
+
+              {/* Info Section */}
+              <motion.div
+                style={{ marginBottom: '20px' }}
+                initial={{ opacity: 0, y: -5 }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  transition: { delay: 0.15, duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+                }}
+              >
+                <p style={{ color: '#a1a1a1', marginBottom: '8px' }}>
+                  Канал: <strong style={{ color: '#fafafa' }}>{channel || 'не указан'}</strong>
+                </p>
+                <p style={{ color: '#a1a1a1' }}>
+                  Статус: {' '}
+                  {status === 'connecting' && <span style={{ color: '#fbbf24' }}>⟳ Подключение...</span>}
+                  {status === 'connected' && <span style={{ color: '#8b5cf6' }}>✓ Подключено</span>}
+                  {status === 'error' && <span style={{ color: '#ff6467' }}>✗ Ошибка подключения</span>}
+                </p>
+              </motion.div>
+
+              {/* Transcription Box */}
+              <motion.div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem',
+                  lineHeight: '1.6',
+                  marginBottom: '16px'
+                }}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  transition: { delay: 0.2, duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+                }}
+              >
             {transcription.length === 0 ? (
-              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: 'var(--space-8)' }}>
+              <p style={{ color: '#a1a1a1', textAlign: 'center', padding: '40px 0' }}>
                 Ожидание транскрипции...
               </p>
             ) : (
               transcription.map((text, idx) => (
                 <motion.div
                   key={idx}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{
+                    opacity: 1,
+                    x: 0,
+                    transition: { delay: idx * 0.05, duration: 0.3 }
+                  }}
                   style={{
-                    marginBottom: 'var(--space-3)',
-                    padding: 'var(--space-2)',
-                    borderLeft: '2px solid var(--neon-green)',
-                    paddingLeft: 'var(--space-3)',
-                    color: 'var(--text-primary)'
+                    marginBottom: '12px',
+                    padding: '8px',
+                    borderLeft: '2px solid #8b5cf6',
+                    paddingLeft: '12px',
+                    color: '#fafafa'
                   }}
                 >
                   {text}
                 </motion.div>
               ))
             )}
-          </div>
+          </motion.div>
 
-          <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'center' }}>
-            <button
+          {/* LLM Test Section */}
+          <motion.div
+            style={{ display: 'flex', gap: '16px', alignItems: 'center' }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              transition: { delay: 0.25, duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+            }}
+          >
+            <motion.button
               onClick={testLLM}
               disabled={testingLLM || transcription.length === 0}
-              className="btn primary cursor-target"
+              className="cursor-pointer"
+              style={{
+                background: testingLLM || transcription.length === 0 ? 'rgba(139, 92, 246, 0.2)' : 'rgba(139, 92, 246, 0.3)',
+                border: '1px solid rgba(139, 92, 246, 0.4)',
+                borderRadius: '8px',
+                padding: '12px 24px',
+                color: '#fff',
+                fontFamily: 'var(--font-display)',
+                fontSize: '0.9rem',
+                cursor: testingLLM || transcription.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: testingLLM || transcription.length === 0 ? 0.5 : 1,
+                transition: 'all 0.2s'
+              }}
+              whileHover={testingLLM || transcription.length === 0 ? {} : {
+                background: 'rgba(139, 92, 246, 0.4)',
+                scale: 1.05
+              }}
+              whileTap={testingLLM || transcription.length === 0 ? {} : { scale: 0.95 }}
             >
               {testingLLM ? '⟳ ГЕНЕРАЦИЯ...' : '🤖 ТЕСТ LLM'}
-            </button>
+            </motion.button>
             {llmResult && (
-              <div style={{
-                flex: 1,
-                padding: 'var(--space-3)',
-                backgroundColor: 'rgba(138, 43, 226, 0.1)',
-                border: '1px solid var(--neon-purple)',
-                borderRadius: '4px',
-                fontSize: '0.9rem'
-              }}>
-                <strong style={{ color: 'var(--neon-purple)' }}>LLM:</strong> {llmResult}
-              </div>
+              <motion.div
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  borderRadius: '8px',
+                  fontSize: '0.9rem'
+                }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+              >
+                <strong style={{ color: '#8b5cf6' }}>LLM:</strong> <span style={{ color: '#fafafa' }}>{llmResult}</span>
+              </motion.div>
             )}
+          </motion.div>
+            </motion.div>
           </div>
-        </motion.div>
-      </motion.div>
+        </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   )
 }

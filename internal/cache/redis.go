@@ -45,6 +45,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// Ping проверяет доступность Redis
+func (c *Client) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return c.rdb.Ping(ctx).Err()
+}
+
 func (c *Client) IncrementRateLimit(ctx context.Context, key string, window time.Duration) (int64, error) {
 	pipe := c.rdb.Pipeline()
 	incr := pipe.Incr(ctx, key)

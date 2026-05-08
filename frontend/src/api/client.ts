@@ -150,7 +150,10 @@ export const api = {
   createBot: (data: CreateBotRequest) => client.post('/api/bots', data),
   updateBot: (id: string, data: Partial<Bot>) => client.put(`/api/bots/${id}`, data),
   deleteBot: (id: string) => client.delete(`/api/bots/${id}`),
-  startBot: (id: string) => client.post(`/api/bots/${id}/start`),
+  startBot: (id: string, disableLlm?: boolean) => {
+    const params = disableLlm ? '?disable_llm=true' : ''
+    return client.post(`/api/bots/${id}/start${params}`)
+  },
   stopBot: (id: string) => client.post(`/api/bots/${id}/stop`),
   startAll: () => client.post('/api/bots/start-all'),
   stopAll: () => client.post('/api/bots/stop-all'),

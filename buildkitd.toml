@@ -1,0 +1,6 @@
+[registry."docker.io"]
+  mirrors = ["mirror.yandex.ru/mirrors/docker"]
+  insecure = false
+
+[registry."mirror.yandex.ru"]
+  insecure = false
