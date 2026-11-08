@@ -9,23 +9,30 @@ import (
 
 // Settings represents global system settings
 type Settings struct {
-	ID               string    `json:"id"`
-	Channels         []string  `json:"channels"`
-	DebugMode        bool      `json:"debug_mode"`
-	DebugChannel     string    `json:"debug_channel"`
-	PositivePrompt   string    `json:"positive_prompt"`
-	NegativePrompt   string    `json:"negative_prompt"`
-	MaxTokens        int       `json:"max_tokens"`
-	AudioEnabled     bool      `json:"audio_enabled"`
-	RotationEnabled  bool      `json:"rotation_enabled"`
-	RotationInterval int       `json:"rotation_interval"` // minutes
-	LLMProvider      string    `json:"llm_provider"`
-	LLMApiURL        string    `json:"llm_api_url"`
-	LLMModel         string    `json:"llm_model"`
-	LLMApiKey        string    `json:"llm_api_key"`
-	TwitchClientID   string    `json:"twitch_client_id"`
-	TwitchClientSecret string  `json:"twitch_client_secret"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                          string    `json:"id"`
+	Channels                    []string  `json:"channels"`
+	DebugMode                   bool      `json:"debug_mode"`
+	DebugChannel                string    `json:"debug_channel"`
+	PositivePrompt              string    `json:"positive_prompt"`
+	NegativePrompt              string    `json:"negative_prompt"`
+	MaxTokens                   int       `json:"max_tokens"`
+	AudioEnabled                bool      `json:"audio_enabled"`
+	RotationEnabled             bool      `json:"rotation_enabled"`
+	RotationInterval            int       `json:"rotation_interval"` // minutes
+	LLMProvider                 string    `json:"llm_provider"`
+	LLMApiURL                   string    `json:"llm_api_url"`
+	LLMModel                    string    `json:"llm_model"`
+	LLMApiKey                   string    `json:"llm_api_key"`
+	LLMPaidModel                string    `json:"llm_paid_model"`
+	LLMPaidEnabled              bool      `json:"llm_paid_enabled"`
+	LLMPaidDailyCapUSD          float64   `json:"llm_paid_daily_cap_usd"`
+	LLMPaidEnabledEffective     bool      `json:"llm_paid_enabled_effective"`
+	LLMPaidDailyCapUSDEffective float64   `json:"llm_paid_daily_cap_usd_effective"`
+	LLMApiKeySet                bool      `json:"llm_api_key_set"`
+	LLMApiKeySource             string    `json:"llm_api_key_source"`
+	TwitchClientID              string    `json:"twitch_client_id"`
+	TwitchClientSecret          string    `json:"twitch_client_secret"`
+	UpdatedAt                   time.Time `json:"updated_at"`
 }
 
 const settingsTableSQL = `
@@ -40,16 +47,32 @@ CREATE TABLE IF NOT EXISTS settings (
     audio_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_interval INT NOT NULL DEFAULT 60,
-    llm_provider TEXT NOT NULL DEFAULT 'lmstudio',
-    llm_api_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:1234/v1',
-    llm_model TEXT NOT NULL DEFAULT '',
+    llm_provider TEXT NOT NULL DEFAULT 'openrouter',
+    llm_api_url TEXT NOT NULL DEFAULT 'https://openrouter.ai/api/v1',
+    llm_model TEXT NOT NULL DEFAULT 'openrouter/free',
     llm_api_key TEXT NOT NULL DEFAULT '',
+    llm_paid_model TEXT NOT NULL DEFAULT 'z-ai/glm-5.3-flash',
+    llm_paid_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    llm_paid_daily_cap_usd DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     twitch_client_id TEXT NOT NULL DEFAULT '',
     twitch_client_secret TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 INSERT INTO settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_model TEXT NOT NULL DEFAULT 'z-ai/glm-5.3-flash';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_daily_cap_usd DOUBLE PRECISION NOT NULL DEFAULT 1.0;
+
+UPDATE settings
+SET llm_provider = 'openrouter',
+    llm_api_url = 'https://openrouter.ai/api/v1',
+    llm_model = 'openrouter/free'
+WHERE llm_provider = 'lmstudio'
+   OR llm_api_url LIKE '%:1234%'
+   OR llm_model = ''
+   OR llm_model = 'local-model';
 `
 
 func (s *Store) EnsureSettingsTable(ctx context.Context) error {
@@ -71,6 +94,7 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 		SELECT id, channels, debug_mode, debug_channel, positive_prompt, negative_prompt,
 		       max_tokens, audio_enabled, rotation_enabled, rotation_interval,
 		       llm_provider, llm_api_url, llm_model, llm_api_key,
+		       llm_paid_model, llm_paid_enabled, llm_paid_daily_cap_usd,
 		       twitch_client_id, twitch_client_secret, updated_at
 		FROM settings WHERE id = 'default'
 	`).Scan(
@@ -88,6 +112,9 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 		&settings.LLMApiURL,
 		&settings.LLMModel,
 		&settings.LLMApiKey,
+		&settings.LLMPaidModel,
+		&settings.LLMPaidEnabled,
+		&settings.LLMPaidDailyCapUSD,
 		&settings.TwitchClientID,
 		&settings.TwitchClientSecret,
 		&settings.UpdatedAt,
@@ -127,8 +154,11 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 			llm_api_url = $11,
 			llm_model = $12,
 			llm_api_key = $13,
-			twitch_client_id = $14,
-			twitch_client_secret = $15,
+			llm_paid_model = $14,
+			llm_paid_enabled = $15,
+			llm_paid_daily_cap_usd = $16,
+			twitch_client_id = $17,
+			twitch_client_secret = $18,
 			updated_at = NOW()
 		WHERE id = 'default'
 	`,
@@ -145,6 +175,9 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 		settings.LLMApiURL,
 		settings.LLMModel,
 		settings.LLMApiKey,
+		settings.LLMPaidModel,
+		settings.LLMPaidEnabled,
+		settings.LLMPaidDailyCapUSD,
 		settings.TwitchClientID,
 		settings.TwitchClientSecret,
 	)
