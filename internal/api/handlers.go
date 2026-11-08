@@ -560,10 +560,15 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	oldSettings, _ := h.store.GetSettings(ctx)
+	oldSettings, err := h.store.GetSettings(ctx)
+	if err != nil {
+		h.logSettingsChange("error", "Failed to load current settings", nil)
+		http.Error(w, `{"error":"failed to load current settings"}`, http.StatusInternalServerError)
+		return
+	}
 
 	// An empty incoming key means "keep the stored database key".
-	if settings.LLMApiKey == "" && oldSettings != nil {
+	if settings.LLMApiKey == "" {
 		settings.LLMApiKey = oldSettings.LLMApiKey
 	}
 
@@ -626,6 +631,10 @@ func (h *Handler) logSettingsChange(level, message string, changes map[string]in
 
 func (h *Handler) calculateSettingsChanges(old, new *storage.Settings) map[string]interface{} {
 	changes := make(map[string]interface{})
+
+	if old == nil {
+		old = &storage.Settings{}
+	}
 
 	if !reflect.DeepEqual(old.Channels, new.Channels) {
 		changes["channels"] = map[string]interface{}{

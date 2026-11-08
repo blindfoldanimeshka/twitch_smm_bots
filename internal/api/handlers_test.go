@@ -731,3 +731,38 @@ func TestCalculateSettingsChangesMasksAPIKey(t *testing.T) {
 	same := handler.calculateSettingsChanges(old, old)
 	assert.NotContains(t, same, "llm_api_key")
 }
+
+func TestUpdateSettingsFailsWhenOldSettingsUnavailable(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.settingsManager = mockSettings
+	handler.envLookup = fixedEnv(nil)
+
+	mockStore.On("GetSettings", mock.Anything).Return(nil, assert.AnError)
+	mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
+	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": ""})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	mockStore.AssertNotCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
+	mockSettings.AssertNotCalled(t, "ApplySettings", mock.Anything, mock.Anything)
+}
+
+func TestCalculateSettingsChangesHandlesNilOld(t *testing.T) {
+	handler := &Handler{}
+	new := &storage.Settings{
+		Channels:  []string{"ch"},
+		LLMApiKey: "k",
+	}
+
+	changes := handler.calculateSettingsChanges(nil, new)
+
+	assert.Contains(t, changes, "channels")
+	assert.Contains(t, changes, "llm_api_key")
+}
