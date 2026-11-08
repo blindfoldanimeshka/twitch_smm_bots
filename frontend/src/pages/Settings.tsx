@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, type Settings as SettingsType } from '../api/client'
+import { api, type Settings as SettingsType, type LLMStatus } from '../api/client'
 import { GridBeam } from '../components/ui/grid-beam'
 import { SettingsLogPanel } from '../components/SettingsLogPanel'
 import { Switch } from '../components/ui/switch'
@@ -19,15 +19,23 @@ export default function Settings() {
     audio_enabled: false,
     rotation_enabled: false,
     rotation_interval: 60,
-    llm_provider: 'lmstudio',
-    llm_api_url: 'http://127.0.0.1:1234/v1',
-    llm_model: '',
+    llm_provider: 'openrouter',
+    llm_api_url: 'https://openrouter.ai/api/v1',
+    llm_model: 'openrouter/free',
+    llm_paid_model: 'z-ai/glm-5.3-flash',
+    llm_paid_enabled: true,
+    llm_paid_daily_cap_usd: 1,
+    llm_paid_enabled_effective: true,
+    llm_paid_daily_cap_usd_effective: 1,
     llm_api_key: '',
+    llm_api_key_set: false,
+    llm_api_key_source: 'none',
     twitch_client_id: '',
     twitch_client_secret: '',
     updated_at: '',
   })
   const [testingConnection, setTestingConnection] = useState(false)
+  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [saveError, setSaveError] = useState(false)
   const [audioModalOpen, setAudioModalOpen] = useState(false)
@@ -45,15 +53,38 @@ export default function Settings() {
       setFormState({
         ...settings,
         channels: settings.channels.length > 0 ? settings.channels : [''],
-        llm_provider: settings.llm_provider || 'lmstudio',
-        llm_api_url: settings.llm_api_url || 'http://127.0.0.1:1234/v1',
-        llm_model: settings.llm_model || '',
-        llm_api_key: settings.llm_api_key || '',
+        llm_provider: settings.llm_provider || 'openrouter',
+        llm_api_url: settings.llm_api_url || 'https://openrouter.ai/api/v1',
+        llm_model: settings.llm_model || 'openrouter/free',
+        llm_paid_model: settings.llm_paid_model ?? 'z-ai/glm-5.3-flash',
+        llm_paid_enabled: settings.llm_paid_enabled ?? true,
+        llm_paid_daily_cap_usd: settings.llm_paid_daily_cap_usd ?? 1,
+        llm_paid_enabled_effective: settings.llm_paid_enabled_effective ?? settings.llm_paid_enabled ?? true,
+        llm_paid_daily_cap_usd_effective: settings.llm_paid_daily_cap_usd_effective ?? settings.llm_paid_daily_cap_usd ?? 1,
+        llm_api_key: '',
+        llm_api_key_set: settings.llm_api_key_set ?? false,
+        llm_api_key_source: settings.llm_api_key_source ?? 'none',
         twitch_client_id: settings.twitch_client_id || '',
         twitch_client_secret: settings.twitch_client_secret || '',
       })
     }
   }, [settings])
+
+  useEffect(() => {
+    let cancelled = false
+    api.getLLMStatus()
+      .then((response) => {
+        if (!cancelled) {
+          setLlmStatus(response.data)
+        }
+      })
+      .catch(() => {
+        // Status panel simply stays hidden until the connection test succeeds.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const updateSettingsMutation = useMutation({
     mutationFn: (data: SettingsType) => api.updateSettings(data),
@@ -90,10 +121,17 @@ export default function Settings() {
     setTestingConnection(true)
     try {
       const response = await api.getLLMStatus()
-      if (response.data.available) {
-        alert('✓ Подключение успешно! Провайдер ' + response.data.provider + ' доступен.')
+      const status = response.data
+      setLlmStatus(status)
+      if (status.available) {
+        const freeModel = status.free_model || status.model || 'N/A'
+        let message = '✓ Подключение успешно! Провайдер ' + status.provider + ', бесплатная модель ' + freeModel + '.'
+        if (status.generation_available === false) {
+          message += '\n\n⚠ Генерация недоступна: ' + (status.last_error || status.error || 'причина не указана')
+        }
+        alert(message)
       } else {
-        alert('✗ Подключение не удалось: ' + (response.data.error || 'Неизвестная ошибка'))
+        alert('✗ Подключение не удалось: ' + (status.error || status.last_error || 'Неизвестная ошибка'))
       }
     } catch (error) {
       alert('✗ Ошибка при проверке подключения')
@@ -101,6 +139,26 @@ export default function Settings() {
       setTestingConnection(false)
     }
   }
+
+  const apiKeySourceLabel =
+    formState.llm_api_key_source === 'env'
+      ? 'Ключ из окружения'
+      : formState.llm_api_key_source === 'database'
+        ? 'Ключ сохранён в БД'
+        : 'Ключ не задан'
+
+  const paidEnabledOverridden =
+    formState.llm_paid_enabled_effective !== formState.llm_paid_enabled
+  const paidCapOverridden =
+    formState.llm_paid_daily_cap_usd_effective !== formState.llm_paid_daily_cap_usd
+
+  const cooldownUntil = (() => {
+    const raw = llmStatus?.free_cooldown_until
+    if (!raw) return null
+    const timestamp = new Date(raw).getTime()
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return null
+    return new Date(timestamp)
+  })()
 
   const saveLLMSettings = () => {
     updateSettingsMutation.mutate({
@@ -268,7 +326,8 @@ export default function Settings() {
         <div style={{ padding: 'var(--space-6)' }}>
           <h2>НАСТРОЙКИ LLM ПРОВАЙДЕРА</h2>
           <p className="hint">
-            Настройка подключения к LM Studio для генерации сообщений ботов.
+            Подключение к OpenRouter для генерации сообщений ботов. Сначала используется бесплатная модель,
+            платный fallback включается только при необходимости.
           </p>
 
         <div className="field" style={{ marginTop: 'var(--space-6)' }}>
@@ -276,15 +335,9 @@ export default function Settings() {
           <select
             id="llm-provider"
             value={formState.llm_provider}
-            onChange={(e) => {
-              setFormState(prev => ({
-                ...prev,
-                llm_provider: e.target.value,
-                llm_api_url: 'http://127.0.0.1:1234/v1',
-              }))
-            }}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_provider: e.target.value }))}
           >
-            <option value="lmstudio">LM Studio (локальный)</option>
+            <option value="openrouter">OpenRouter</option>
           </select>
         </div>
 
@@ -295,21 +348,67 @@ export default function Settings() {
             type="text"
             value={formState.llm_api_url}
             onChange={(e) => setFormState(prev => ({ ...prev, llm_api_url: e.target.value }))}
-            placeholder="http://127.0.0.1:1234/v1"
+            placeholder="https://openrouter.ai/api/v1"
           />
           <p className="hint">Адрес API endpoint провайдера</p>
         </div>
 
         <div className="field">
-          <label htmlFor="llm-model">МОДЕЛЬ</label>
+          <label htmlFor="llm-model">БЕСПЛАТНАЯ МОДЕЛЬ</label>
           <input
             id="llm-model"
             type="text"
             value={formState.llm_model}
             onChange={(e) => setFormState(prev => ({ ...prev, llm_model: e.target.value }))}
-            placeholder="google/gemma-3-4b"
+            placeholder="openrouter/free"
           />
-          <p className="hint">Название модели (можно оставить пустым для автоматического выбора)</p>
+          <p className="hint">Используется в первую очередь</p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="llm-paid-model">ПЛАТНАЯ МОДЕЛЬ (FALLBACK)</label>
+          <input
+            id="llm-paid-model"
+            type="text"
+            value={formState.llm_paid_model}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_paid_model: e.target.value }))}
+            placeholder="z-ai/glm-5.3-flash"
+          />
+          <p className="hint">Включается, когда бесплатная модель недоступна или исчерпана</p>
+        </div>
+
+        <div className="field">
+          <label className="switch-row">
+            <Switch
+              checked={formState.llm_paid_enabled}
+              disabled={paidEnabledOverridden}
+              onCheckedChange={(checked) => setFormState(prev => ({ ...prev, llm_paid_enabled: checked }))}
+            />
+            <span style={{ color: formState.llm_paid_enabled ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+              ВКЛЮЧИТЬ ПЛАТНЫЙ FALLBACK
+            </span>
+          </label>
+          {paidEnabledOverridden && (
+            <p className="hint">Переопределено окружением</p>
+          )}
+        </div>
+
+        <div className="field">
+          <label htmlFor="llm-paid-daily-cap">ДНЕВНОЙ ЛИМИТ РАСХОДОВ, $</label>
+          <input
+            id="llm-paid-daily-cap"
+            type="number"
+            min="0"
+            step="0.01"
+            value={formState.llm_paid_daily_cap_usd}
+            disabled={paidCapOverridden}
+            readOnly={paidCapOverridden}
+            onChange={(e) => setFormState(prev => ({ ...prev, llm_paid_daily_cap_usd: parseFloat(e.target.value) || 0 }))}
+          />
+          <p className="hint">0 или меньше — без лимита</p>
+          {paidCapOverridden && (
+            <p className="hint">Переопределено окружением</p>
+          )}
         </div>
 
         <div className="field">
@@ -319,17 +418,35 @@ export default function Settings() {
             type="password"
             value={formState.llm_api_key}
             onChange={(e) => setFormState(prev => ({ ...prev, llm_api_key: e.target.value }))}
-            placeholder="Не требуется"
-            disabled
+            placeholder={formState.llm_api_key_set ? '•••••••• (already set)' : 'sk-or-v1-...'}
           />
-          <p className="hint">API ключ не требуется для LM Studio</p>
+          <p className="hint">
+            <span
+              style={{
+                display: 'inline-block',
+                padding: '2px 8px',
+                marginRight: '8px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-default)',
+                color: 'var(--text-secondary)',
+                fontSize: '0.7rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+              }}
+            >
+              {apiKeySourceLabel}
+            </span>
+            Оставьте пустым, чтобы сохранить текущий ключ. Ключ берётся из OPENROUTER_API_KEY или базы данных;
+            переменная окружения имеет приоритет.
+          </p>
         </div>
 
         <div className="alert" style={{ marginTop: 'var(--space-4)' }}>
-          <strong>LM Studio:</strong> Убедитесь, что LM Studio запущен и сервер включен на порту 1234.
-          Загрузите модель и нажмите "Start Server" в интерфейсе LM Studio.
+          <strong>OpenRouter:</strong> Сначала используется бесплатная модель «openrouter/free».
+          Если бесплатные запросы исчерпаны или недоступны, включается платный fallback
+          «{formState.llm_paid_model}», расход которого ограничен дневным лимитом.
           <br/>
-          Модель загрузится автоматически при первом запросе.
+          Ключ берётся из переменной окружения <code>OPENROUTER_API_KEY</code> или из базы данных.
         </div>
 
         <div style={{ marginTop: 'var(--space-6)', display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
@@ -357,6 +474,60 @@ export default function Settings() {
             {updateSettingsMutation.isPending ? '⟳ СОХРАНЕНИЕ...' : '💾 СОХРАНИТЬ НАСТРОЙКИ LLM'}
           </button>
         </div>
+
+        {llmStatus && (
+          <div
+            style={{
+              marginTop: 'var(--space-4)',
+              padding: 'var(--space-4)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 'var(--space-4)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <span>
+              {llmStatus.available ? 'Подключение: OK' : 'Подключение: ошибка'}
+              {' • '}
+              {llmStatus.provider || 'Unknown'}
+              {' • '}
+              {llmStatus.free_model || llmStatus.model || 'N/A'}
+            </span>
+            <span>
+              Генерация: {llmStatus.generation_available ? 'доступна' : 'недоступна'}
+            </span>
+            <span>
+              Расход сегодня: ${Number(llmStatus.paid_spent_today_usd ?? 0).toFixed(2)}
+            </span>
+            <span>
+              Бесплатных запросов осталось: {llmStatus.free_requests_remaining ?? 0}
+              {' из '}
+              {llmStatus.free_requests_limit ?? 0}
+            </span>
+            <span>
+              Платный fallback: {llmStatus.paid_enabled ? 'включён' : 'выключен'}
+              {' • лимит $'}
+              {Number(llmStatus.paid_daily_cap_usd ?? 0).toFixed(2)}
+              {'/день'}
+            </span>
+            {cooldownUntil && (
+              <span style={{ color: 'var(--state-warning)' }}>
+                Бесплатная модель на паузе до{' '}
+                {cooldownUntil.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+            {!llmStatus.generation_available && (llmStatus.last_error || llmStatus.error) && (
+              <span style={{ color: 'var(--state-warning)' }}>
+                Причина: {llmStatus.last_error || llmStatus.error}
+              </span>
+            )}
+          </div>
+        )}
 
         </div>
       </GridBeam>

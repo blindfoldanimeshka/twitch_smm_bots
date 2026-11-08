@@ -23,9 +23,21 @@ export function FloatingProviderStatus() {
       setStatus({
         provider: 'Unknown',
         available: false,
+        generation_available: false,
         error: err?.message || 'Failed to fetch status',
+        last_error: err?.message || 'Failed to fetch status',
         model: 'N/A',
+        free_model: 'N/A',
+        paid_model: 'N/A',
         url: 'N/A',
+        paid_enabled: false,
+        paid_daily_cap_usd: 0,
+        paid_spent_today_usd: 0,
+        free_requests_limit: 0,
+        free_requests_remaining: 0,
+        free_requests_used: 0,
+        free_cooldown_until: '',
+        inflight_paid_requests: 0,
       })
     } finally {
       setLoading(false)
@@ -49,7 +61,7 @@ export function FloatingProviderStatus() {
   const getProviderBadgeColor = (provider: string | undefined) => {
     if (!provider) return '#737373'
     switch (provider.toLowerCase()) {
-      case 'lmstudio':
+      case 'openrouter':
         return '#8b5cf6'
       case 'openai':
         return '#10a37f'
@@ -57,6 +69,19 @@ export function FloatingProviderStatus() {
         return '#737373'
     }
   }
+
+  const connectionState: 'ready' | 'limited' | 'disconnected' =
+    status?.available && status?.generation_available
+      ? 'ready'
+      : status?.available
+        ? 'limited'
+        : 'disconnected'
+
+  const connectionColor =
+    connectionState === 'ready' ? '#10b981' : connectionState === 'limited' ? '#f59e0b' : '#ef4444'
+
+  const connectionLabel =
+    connectionState === 'ready' ? 'READY' : connectionState === 'limited' ? 'LIMITED' : 'DISCONNECTED'
 
   return (
     <>
@@ -105,10 +130,13 @@ export function FloatingProviderStatus() {
               width: '10px',
               height: '10px',
               borderRadius: '50%',
-              background: status?.available ? '#10b981' : '#ef4444',
-              boxShadow: status?.available
-                ? '0 0 8px rgba(16, 185, 129, 0.6)'
-                : '0 0 8px rgba(239, 68, 68, 0.6)',
+              background: connectionColor,
+              boxShadow:
+                connectionState === 'ready'
+                  ? '0 0 8px rgba(16, 185, 129, 0.6)'
+                  : connectionState === 'limited'
+                    ? '0 0 8px rgba(245, 158, 11, 0.6)'
+                    : '0 0 8px rgba(239, 68, 68, 0.6)',
             }}
           />
         </div>
@@ -315,10 +343,7 @@ export function FloatingProviderStatus() {
                         border: '1px solid #383838',
                       }}
                     >
-                      <Zap
-                        size={20}
-                        color={status.available ? '#10b981' : '#ef4444'}
-                      />
+                      <Zap size={20} color={connectionColor} />
                       <div style={{ flex: 1 }}>
                         <div
                           style={{
@@ -352,35 +377,88 @@ export function FloatingProviderStatus() {
                               width: '8px',
                               height: '8px',
                               borderRadius: '50%',
-                              background: status.available ? '#10b981' : '#ef4444',
-                              boxShadow: status.available
-                                ? '0 0 8px rgba(16, 185, 129, 0.6)'
-                                : '0 0 8px rgba(239, 68, 68, 0.6)',
+                              background: connectionColor,
+                              boxShadow:
+                                connectionState === 'ready'
+                                  ? '0 0 8px rgba(16, 185, 129, 0.6)'
+                                  : connectionState === 'limited'
+                                    ? '0 0 8px rgba(245, 158, 11, 0.6)'
+                                    : '0 0 8px rgba(239, 68, 68, 0.6)',
                             }}
                           />
                           <span
                             style={{
                               fontSize: '0.85rem',
-                              color: status.available ? '#10b981' : '#ef4444',
+                              color: connectionColor,
                               fontWeight: 600,
                               textTransform: 'uppercase',
                               letterSpacing: '0.05em',
                             }}
                           >
-                            {status.available ? 'Connected' : 'Disconnected'}
+                            {connectionLabel}
                           </span>
                         </div>
-                        {status.error && (
+                        {(status.last_error || status.error) && (
                           <div
                             style={{
                               fontSize: '0.75rem',
-                              color: '#ef4444',
+                              color: connectionState === 'disconnected' ? '#ef4444' : '#f59e0b',
                               marginTop: '4px',
+                              wordBreak: 'break-word',
                             }}
                           >
-                            {status.error}
+                            {status.last_error || status.error}
                           </div>
                         )}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        padding: '12px',
+                        background: '#0a0a0a',
+                        border: '1px solid #383838',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '0.75rem',
+                          color: '#717171',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        <Zap size={16} color="#a1a1a1" />
+                        Budget
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          fontSize: '0.8rem',
+                          color: '#fafafa',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      >
+                        <div>
+                          Spent today: ${Number(status.paid_spent_today_usd ?? 0).toFixed(2)}
+                        </div>
+                        <div>
+                          Free requests remaining: {status.free_requests_remaining ?? 0}
+                          {' / '}
+                          {status.free_requests_limit ?? 0}
+                        </div>
+                        <div>
+                          Paid fallback:{' '}
+                          {status.paid_enabled
+                            ? `on · $${Number(status.paid_daily_cap_usd ?? 0).toFixed(2)}/day`
+                            : 'off'}
+                        </div>
                       </div>
                     </div>
 

@@ -69,7 +69,14 @@ export interface Settings {
   llm_provider: string;
   llm_api_url: string;
   llm_model: string;
+  llm_paid_model: string;
+  llm_paid_enabled: boolean;
+  llm_paid_daily_cap_usd: number;
+  llm_paid_enabled_effective: boolean;
+  llm_paid_daily_cap_usd_effective: number;
   llm_api_key: string;
+  llm_api_key_set: boolean;
+  llm_api_key_source: 'env' | 'database' | 'none';
   twitch_client_id: string;
   twitch_client_secret: string;
   updated_at: string;
@@ -78,9 +85,21 @@ export interface Settings {
 export interface LLMStatus {
   provider: string;
   available: boolean;
+  generation_available: boolean;
   error?: string;
   model: string;
+  free_model: string;
+  paid_model: string;
   url: string;
+  paid_enabled: boolean;
+  paid_daily_cap_usd: number;
+  paid_spent_today_usd: number;
+  free_requests_limit: number;
+  free_requests_remaining: number;
+  free_requests_used: number;
+  free_cooldown_until: string;
+  inflight_paid_requests: number;
+  last_error?: string;
 }
 
 export interface BotLogEntry {
