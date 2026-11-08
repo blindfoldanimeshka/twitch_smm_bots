@@ -1,51 +1,34 @@
-# Accept base image prefix via build arg (for mirrors)
+# Multi-stage build. BASE_IMAGE_PREFIX is optional (Docker Hub mirror), e.g.
+#   docker compose build --build-arg BASE_IMAGE_PREFIX=mirror.yandex.ru/mirrors/docker/library/
 ARG BASE_IMAGE_PREFIX=
-FROM ${BASE_IMAGE_PREFIX}ubuntu:22.04 AS builder
 
-# Устанавливаем Go
-RUN apt-get update && apt-get install -y wget && \
-    wget https://go.dev/dl/go1.23.0.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.23.0.linux-amd64.tar.gz && \
-    rm go1.23.0.linux-amd64.tar.gz
+FROM ${BASE_IMAGE_PREFIX}golang:1.26-alpine AS builder
 
-ENV PATH="/usr/local/go/bin:${PATH}"
+WORKDIR /src
 
-WORKDIR /app
+ENV CGO_ENABLED=0 \
+    GOOS=linux
 
-# Копируем go.mod и go.sum
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Копируем исходный код
-COPY . .
+COPY logic.go ./
+COPY internal ./internal
 
-# Собираем приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -o bot logic.go
+RUN go build -trimpath -ldflags="-s -w" -o /out/bot .
 
-# Финальный образ
-FROM ${BASE_IMAGE_PREFIX}ubuntu:22.04
+FROM ${BASE_IMAGE_PREFIX}alpine:3.22
 
-# Устанавливаем переменные окружения для неинтерактивной установки
-ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Moscow
 
-# Устанавливаем зависимости
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    tzdata \
-    ffmpeg \
-    python3 \
-    python3-pip \
-    && pip3 install --no-cache-dir streamlink \
-    && rm -rf /var/lib/apt/lists/*
+# ffmpeg + streamlink are needed only for optional stream audio transcription,
+# but they are small enough to keep the runtime image self-contained.
+RUN apk add --no-cache ca-certificates tzdata ffmpeg streamlink
 
-WORKDIR /root/
+WORKDIR /app
 
-# Копируем бинарник из builder
-COPY --from=builder /app/bot .
+COPY --from=builder /out/bot ./bot
 
-# Открываем порт
 EXPOSE 8080
 
-# Запускаем приложение
-CMD ["./bot"]
+ENTRYPOINT ["./bot"]

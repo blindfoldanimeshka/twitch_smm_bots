@@ -1,59 +1,41 @@
-﻿services:
-  stt:
-    build:
-      context: ./stt_server
-      dockerfile: Dockerfile
-      args:
-        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
-    container_name: twitch-bot-stt
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-    environment:
-      - STT_MODEL_NAME=${STT_MODEL_NAME:-small}
-      - STT_DEVICE=${STT_DEVICE:-cpu}
-      - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-int8}
-    volumes:
-      - whisper_cache:/root/.cache/huggingface
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+﻿name: twitch-smm
 
+# BASE_IMAGE_PREFIX is only needed when Docker Hub is unreachable.
+# Example for RU/CIS: BASE_IMAGE_PREFIX=mirror.yandex.ru/mirrors/docker/library/
+
+services:
   postgres:
-    image: postgres:16
-    container_name: twitch-bot-postgres
+    image: ${BASE_IMAGE_PREFIX:-}postgres:16-alpine
+    container_name: twitch-smm-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: botfarm
       POSTGRES_USER: botfarm
       POSTGRES_PASSWORD: botfarm
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U botfarm"]
+      test: ["CMD-SHELL", "pg_isready -U botfarm -d botfarm"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
-    image: redis:7-alpine
-    container_name: twitch-bot-redis
+    image: ${BASE_IMAGE_PREFIX:-}redis:7-alpine
+    container_name: twitch-smm-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   backend:
     build:
@@ -61,22 +43,22 @@
       dockerfile: Dockerfile
       args:
         - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
-    container_name: twitch-bot-backend
+    container_name: twitch-smm-backend
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      - TWITCH_CHANNEL=${TWITCH_CHANNEL}
+      - TWITCH_CHANNEL=${TWITCH_CHANNEL:-}
       - API_KEY=${API_KEY:-secret-api-key-12345}
+      - API_PORT=8080
+      - API_CORS_ORIGINS=${API_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      - ENABLE_CONSOLE=false
+      - DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
+      - REDIS_URL=redis://redis:6379
       - LLM_PROVIDER=${LLM_PROVIDER:-lmstudio}
       - LLM_API_URL=${LLM_API_URL:-http://host.docker.internal:1234/v1}
       - LLM_MODEL=${LLM_MODEL:-local-model}
       - LLM_API_KEY=${LLM_API_KEY:-}
-      - DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-      - API_PORT=8080
-      - API_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-      - ENABLE_CONSOLE=false
       - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
       - AUDIO_STT_URL=${AUDIO_STT_URL:-http://stt:9000/v1/audio/transcriptions}
       - AUDIO_STT_MODEL=${AUDIO_STT_MODEL:-whisper-1}
@@ -95,10 +77,14 @@
         condition: service_healthy
       redis:
         condition: service_healthy
-      stt:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   frontend:
     build:
@@ -106,19 +92,54 @@
       dockerfile: Dockerfile
       args:
         - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
-        - VITE_API_URL=http://localhost:8080
-        - VITE_WS_URL=ws://localhost:8080
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8080}
+        - VITE_WS_URL=${VITE_WS_URL:-ws://localhost:8080}
         - VITE_API_KEY=${API_KEY:-secret-api-key-12345}
-    container_name: twitch-bot-frontend
+    container_name: twitch-smm-frontend
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # Optional: local stream audio transcription. Start with:
+  #   docker compose --profile audio up -d --build
+  stt:
+    profiles: ["audio"]
+    build:
+      context: ./stt_server
+      dockerfile: Dockerfile
+      args:
+        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
+    container_name: twitch-smm-stt
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      - STT_MODEL_NAME=${STT_MODEL_NAME:-small}
+      - STT_DEVICE=${STT_DEVICE:-cpu}
+      - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-int8}
+    volumes:
+      - whisper_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
+  # Optional: database UI. Start with:
+  #   docker compose --profile tools up -d
   pgadmin:
-    image: dpage/pgadmin4:8
-    container_name: twitch-bot-pgadmin
+    profiles: ["tools"]
+    image: ${BASE_IMAGE_PREFIX:-}dpage/pgadmin4:8
+    container_name: twitch-smm-pgadmin
     restart: unless-stopped
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@local.dev
@@ -126,9 +147,10 @@
       PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
       PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: 10
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

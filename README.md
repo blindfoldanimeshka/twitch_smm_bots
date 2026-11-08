@@ -1,288 +1,126 @@
-# Twitch Bot Farm
+# Twitch SMM Bot Farm
 
-Система управления Twitch-ботами с UI, LLM-генерацией сообщений и локальной аудио-транскрипцией.
+Система управления Twitch-ботами: веб-UI, LLM-генерация сообщений, ротация по каналам и опциональная транскрипция аудио стрима.
 
----
+## Быстрый старт
 
-## 🚀 Быстрый старт
+Нужен только [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
-### 1. Установите Docker
-Скачайте [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+**Windows:** двойной клик по `start.cmd`.
 
-### 2. Установите LM Studio
-
-- Скачайте [LM Studio](https://lmstudio.ai/)
-- Загрузите модель (например, Google Gemma 3 4B или Llama 3.2 3B)
-- Запустите Local Server на порту 1234
-
-### 3. Настройте проект
+**Linux/macOS:**
 
 ```bash
-# Создайте .env файл
-copy .env.example .env
+./start.sh
 ```
 
-Откройте `.env` и настройте:
+Либо вручную:
+
+```bash
+docker compose up -d --build --wait
+```
+
+Скрипт сам запускает Docker Desktop (если он закрыт), собирает образы и ждёт, пока сервисы станут здоровыми. Первый запуск занимает 5–10 минут, последующие — секунды.
+
+После запуска откройте **http://localhost:3000**.
+
+Файл `.env` **не обязателен**: в `docker-compose.yml` уже есть рабочие значения по умолчанию. Нужен только если хотите что-то поменять — скопируйте `.env.example` в `.env`.
+
+## Первый бот
+
+1. **Settings → channels** — добавьте канал (имя без `#`), нажмите «Сохранить».
+2. **Bots → Добавить бота** — Twitch login, OAuth-токен (`oauth:...`, получить на https://twitchapps.com/tmi/), имя, личность, задержки, лимит.
+3. **Запустить** бота или «Запустить всех».
+
+## LLM
+
+По умолчанию используется LM Studio на вашем компьютере:
+
+- запустите LM Studio → Local Server на порту `1234`;
+- из контейнера адрес — `http://host.docker.internal:1234/v1`.
+
+Провайдер, URL, модель и ключ можно поменять в UI (**Settings → LLM**) — подойдёт любой OpenAI-совместимый API.
+
+Если LLM недоступен, backend и UI всё равно запускаются, но боты не смогут генерировать сообщения.
+
+## Сервисы
+
+| Сервис    | Адрес                          |
+|-----------|--------------------------------|
+| UI        | http://localhost:3000          |
+| API       | http://localhost:8080/api/health |
+| PostgreSQL| `localhost:5432` (botfarm/botfarm) |
+| Redis     | `localhost:6379`               |
+
+API-ключ по умолчанию: `secret-api-key-12345` (меняется через `API_KEY` в `.env`).
+
+## Управление
+
+```bash
+docker compose ps                     # статус
+docker compose logs -f backend        # логи backend
+docker compose logs -f frontend       # логи UI
+docker compose down                   # остановить (данные сохраняются)
+docker compose down -v                # остановить и удалить данные
+```
+
+Windows: `stop.cmd`.
+
+## Опциональные сервисы
+
+Они не собираются при обычном запуске.
+
+```bash
+# Локальная транскрипция аудио стрима (faster-whisper, тяжёлый образ)
+docker compose --profile audio up -d --build
+
+# pgAdmin: http://localhost:5050 (admin@local.dev / admin)
+docker compose --profile tools up -d
+```
+
+После включения профиля `audio` включите анализ аудио в UI (**Settings**). Подробности: [docs/AUDIO_TRANSCRIPTION.md](docs/AUDIO_TRANSCRIPTION.md).
+
+## Если Docker Hub недоступен
+
+Укажите зеркало в `.env`:
 
 ```env
-API_KEY=secret-key-12345
-LLM_PROVIDER=lmstudio
-LLM_API_URL=http://127.0.0.1:1234/v1
-LLM_MODEL=google/gemma-3-4b
+BASE_IMAGE_PREFIX=mirror.yandex.ru/mirrors/docker/library/
 ```
 
-### 4. Запустите проект
+## Разработка без Docker
+
+Нужны Go 1.26+ и Node.js 22+.
 
 ```bash
-docker compose up -d --build
+docker compose up -d postgres redis
+go run .
+cd frontend && npm ci && npm run dev
 ```
 
-Подождите 2-3 минуты пока все сервисы запустятся.
+UI для разработки: http://localhost:5173 (CORS уже разрешён).
 
-### 5. Создайте бота
-
-1. Откройте: **http://localhost:3000**
-
-2. **Настройки** → добавьте канал:
-   - Введите имя канала (без #): `имя_стримера`
-   - Нажмите **"Сохранить все настройки"**
-
-3. **Боты** → **"Добавить бота"**:
-   - **Twitch Login**: `имя_вашего_бота`
-   - **OAuth токен**: `oauth:xxxxxxxxxxxx` (через https://twitchapps.com/tmi/)
-   - **Имя**: `Любое имя`
-   - **Личность**: `веселый_фанат`
-   - **Min/Max задержка**: `45` / `180`
-   - **Лимит**: `5`
-   - Нажмите **"Сохранить"**
-
-4. Нажмите **"Запустить всех"**
-
-✅ **Готово!** Бот начнет писать в чат.
-
----
-
-## 🎯 Возможности
-
-✅ Управление ботами через UI  
-✅ 4 типа личностей (веселый_фанат, токсик, нейтрал, хайпер)  
-✅ Автоматическая ротация между каналами  
-✅ Аудио-транскрипция стримов (Whisper)  
-✅ Контекстные ответы через LLM  
-✅ WebSocket real-time обновления  
-✅ Rate limiting (Redis)  
-✅ Темная тема UI  
-
----
-
-## 💡 Поддерживаемые LLM
-
-- **LM Studio** — локально, бесплатно, автоматическая инициализация моделей
-
----
-
-## 🔧 Настройка каналов
-
-Каналы задаются через UI: **Settings → channels**
-
-`TWITCH_CHANNEL` в `.env` используется только как fallback.
-
----
-
-## 🎤 Аудио-транскрипция (опционально)
-
-Боты могут слушать стрим и генерировать контекстные ответы.
-
-**Включение:**
-1. В UI включить **"Включить анализ аудио со стрима"**
-2. Нажать **"Сохранить все настройки"**
-3. Проверить логи: `docker compose logs backend stt`
-
-**Технологии:**
-- `streamlink` — захват аудио потока
-- `ffmpeg` — нарезка чанков
-- `faster-whisper` — транскрипция (OpenAI-compatible API)
-
-📖 **Детальная документация:** [docs/AUDIO_TRANSCRIPTION.md](docs/AUDIO_TRANSCRIPTION.md)
-
----
-
-## 📊 Полезные команды
-
-```bash
-# Проверить статус
-docker compose ps
-
-# Логи
-docker compose logs backend --tail=100 -f
-docker compose logs stt --tail=100 -f
-
-# Перезапуск
-docker compose restart backend
-
-# Остановка
-docker compose down
-
-# Полная пересборка
-docker compose down
-docker compose up -d --build --force-recreate
-```
-
----
-
-## 🔗 Доступные сервисы
-
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8080
-- **STT Health**: http://localhost:9000/health
-- **PgAdmin**: http://localhost:5050 (admin@local.dev / admin)
-
----
-
-## 🐛 Troubleshooting
-
-### Боты не подключаются к Twitch
-- Проверьте правильность логина и пароля
-- Используйте **OAuth токен** вида `oauth:...` (а не пароль от аккаунта)
-- Убедитесь что аккаунт не забанен
-
-### LLM не отвечает
-
-**OpenRouter:**
-```bash
-# Проверьте API ключ
-export LLM_API_KEY=sk-or-v1-your-key
-./scripts/test_openrouter.sh
-```
-
-**LM Studio:**
-- Убедитесь что LM Studio запущен
-- Проверьте Local Server на порту 1234
-- Откройте: http://localhost:1234/v1/models
-
-### Сервисы не запускаются
-```bash
-docker compose down
-docker compose up -d --build --force-recreate
-docker compose logs
-```
-
-### Frontend не открывается
-```bash
-docker compose logs frontend
-docker compose restart frontend
-```
-
----
-
-## 📚 Дополнительная документация
-
-### OpenRouter
-- **Интеграция**: `docs/OPENROUTER.md`
-- **Миграция с LM Studio**: `docs/MIGRATION_TO_OPENROUTER.md`
-- **Тест API**: `scripts/test_openrouter.sh`
-
-### Аудио-транскрипция
-- **Полное руководство**: `docs/AUDIO_TRANSCRIPTION.md`
-
-### Конфигурация
-- **Пример .env**: `.env.example`
-- **Docker Compose**: `docker-compose.yml`
-
----
-
-## ⚙️ Переменные окружения
-
-Полный список в `.env.example`. Основные:
-
-```env
-# Обязательные
-API_KEY=your-secret-key
-TWITCH_CHANNEL=                    # fallback, основной канал в UI
-
-# LLM (выберите провайдер)
-LLM_PROVIDER=openrouter            # lmstudio, openrouter, openai, omniroute
-LLM_API_URL=https://openrouter.ai/api/v1
-LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
-LLM_API_KEY=sk-or-v1-your-key
-
-# База данных (defaults)
-DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
-REDIS_URL=redis://redis:6379
-
-# STT (опционально)
-AUDIO_STT_URL=http://stt:9000/v1/audio/transcriptions
-STT_DEVICE=cpu                     # или cuda для GPU
-STT_MODEL_NAME=small               # tiny, base, small, medium, large
-```
-
----
-
-## 🏗️ Архитектура
+## Архитектура
 
 ```
-┌─────────────┐
-│   Frontend  │ React + TypeScript + Vite
-│  (port 3000)│
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   Backend   │ Go + Gorilla Mux + WebSocket
-│  (port 8080)│
-└──────┬──────┘
-       │
-       ├──────► PostgreSQL (база данных)
-       ├──────► Redis (кеш, rate limiting)
-       ├──────► STT Server (faster-whisper)
-       └──────► LLM API (OpenRouter/LM Studio/OpenAI)
+frontend/      React + TypeScript + Vite (nginx в проде)
+logic.go       точка входа backend: менеджер ботов, планировщик, консоль
+internal/api   REST API, WebSocket, middleware
+internal/twitch IRC-клиент Twitch
+internal/llm   OpenAI-совместимый LLM-клиент
+internal/audio streamlink + ffmpeg + STT
+internal/storage PostgreSQL, схема создаётся автоматически при старте
+stt_server/    FastAPI + faster-whisper (опциональный профиль audio)
 ```
 
-**Компоненты:**
-- `internal/api` — REST API, WebSocket, handlers
-- `internal/twitch` — IRC клиент для Twitch
-- `internal/llm` — интеграция с LLM провайдерами
-- `internal/audio` — захват и транскрипция аудио
-- `internal/storage` — PostgreSQL, настройки
-- `internal/cache` — Redis, rate limiting
-- `frontend` — React UI
-- `stt_server` — Python FastAPI + faster-whisper
+Схема БД создаётся и обновляется самим приложением при старте (`EnsureSchema` / `EnsureSettingsTable`), поэтому init-скрипты в `db/` для запуска не нужны.
 
----
+## Траблшутинг
 
-## 📝 Примечания
+**`docker compose up` падает на сборке.** Проверьте, что Docker Desktop запущен и есть интернет. При блокировке Docker Hub используйте `BASE_IMAGE_PREFIX`.
 
-### STT Device
-- `STT_DEVICE=cpu` — стабильный дефолт
-- `STT_DEVICE=cuda` — для GPU ускорения (требует NVIDIA GPU)
+**Порт занят.** Поменяйте левую часть порта в `docker-compose.yml` (`3000:80`, `8080:8080`, `5432:5432`, `6379:6379`).
 
-### Личности ботов
-- **веселый_фанат** — позитивные комментарии
-- **токсик** — провокационные вопросы (не оскорбления)
-- **нейтрал** — обычные вопросы и комментарии
-- **хайпер** — энергичные сообщения со сленгом
+**UI открывается, но запросы к API падают.** Убедитесь, что `API_KEY` в `.env` совпадает с ключом, с которым собран frontend: после изменения выполните `docker compose up -d --build`.
 
-### Rate Limiting
-- Глобальный лимит: 30 сообщений/минуту (настраивается)
-- Лимит на бота: настраивается индивидуально
-- Используется Redis для синхронизации между ботами
-
----
-
-## ⚠️ Ответственность
-
-Используйте проект в рамках правил Twitch и местного законодательства.
-
----
-
-## 🔗 Полезные ссылки
-
-- **OpenRouter**: https://openrouter.ai
-- **LM Studio**: https://lmstudio.ai
-- **Twitch IRC**: https://dev.twitch.tv/docs/irc
-- **Docker**: https://www.docker.com
-
----
-
-**Версия:** 1.1.0  
-**Последнее обновление:** 2026-04-24
+**Сбросить всё.** `docker compose down -v` — удалит базу, redis и кэш моделей.

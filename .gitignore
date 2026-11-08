@@ -1,4 +1,5 @@
 # Binaries
+/bot
 *.exe
 *.dll
 *.so
