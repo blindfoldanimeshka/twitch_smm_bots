@@ -156,7 +156,7 @@ type botRuntime struct {
 	running    bool
 	stopping   bool // P0-1: Graceful shutdown flag
 	lastSent   time.Time
-	disableLLM bool // if true, skip LLM/STT generation
+	disableLLM bool          // if true, skip LLM/STT generation
 	stopped    chan struct{} // P0-1: Channel to signal when bot fully stopped
 }
 
@@ -1010,34 +1010,24 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 		baseCtx = context.Background()
 	}
 
-	// Пересоздать LLM клиент если настройки изменились
-	if settings.LLMProvider != "" && settings.LLMApiURL != "" {
-		slog.Info("Initializing LLM client", "provider", settings.LLMProvider, "model", settings.LLMModel, "url", settings.LLMApiURL)
+	// Reconfigure the single LLM client in place from env + database settings.
+	cfg := mustResolve(llm.EnvFromLookup(os.Getenv), llm.DBConfigFromSettings(settings))
 
-		newClient := llm.NewClient(
-			settings.LLMApiURL,
-			settings.LLMModel,
-			settings.LLMApiKey,
-			settings.LLMProvider,
-		)
-
-		// Проверка доступности нового клиента
-		healthCtx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
-		if err := newClient.HealthCheck(healthCtx); err != nil {
-			cancel()
-			slog.Error("LLM Health check failed", "error", err)
-			if settings.LLMProvider == "lmstudio" {
-				slog.Warn("Make sure LM Studio is running with a model loaded", "url", settings.LLMApiURL)
-			}
-		} else {
-			cancel()
-			slog.Info("LLM Client ready", "provider", settings.LLMProvider, "model", settings.LLMModel)
-		}
-
-		bm.mu.Lock()
-		bm.llmClient = newClient
-		bm.mu.Unlock()
+	bm.mu.Lock()
+	llmClient := bm.llmClient
+	bm.mu.Unlock()
+	if llmClient != nil {
+		llmClient.Reconfigure(cfg)
 	}
+
+	slog.Info("LLM client reconfigured",
+		"provider", cfg.Provider,
+		"free_model", cfg.FreeModel,
+		"paid_model", cfg.PaidModel,
+		"paid_enabled", cfg.PaidEnabled,
+		"paid_daily_cap_usd", cfg.PaidDailyCapUSD,
+		"api_key_set", cfg.APIKey != "",
+	)
 
 	// Update Twitch Helix client if credentials changed
 	if settings.TwitchClientID != "" && settings.TwitchClientSecret != "" {
@@ -1276,12 +1266,15 @@ func runConsole(ctx context.Context, bm *botManager) {
 	}
 }
 
+func mustResolve(env llm.EnvConfig, db llm.DBConfig) llm.Config {
+	cfg, _ := llm.ResolveConfig(env, db)
+	return cfg
+}
+
 func main() {
 	// LLM Configuration
-	llmURL := env("LLM_API_URL", env("LMSTUDIO_URL", "http://127.0.0.1:1234/v1"))
-	llmModel := env("LLM_MODEL", env("LMSTUDIO_MODEL", "local-model"))
-	llmAPIKey := env("LLM_API_KEY", "")
-	llmProvider := env("LLM_PROVIDER", "lmstudio") // lmstudio (единственный поддерживаемый провайдер)
+	llmEnv := llm.EnvFromLookup(os.Getenv)
+	llmClient := llm.NewClient(mustResolve(llmEnv, llm.DBConfig{}))
 
 	// Database & Cache
 	databaseURL := env("DATABASE_URL", "postgres://botfarm:botfarm@localhost:5432/botfarm?sslmode=disable")
@@ -1316,17 +1309,6 @@ func main() {
 	apiPort, err := strconv.Atoi(apiPortStr)
 	if err != nil {
 		apiPort = 8080
-	}
-
-	llmClient := llm.NewClient(llmURL, llmModel, llmAPIKey, llmProvider)
-	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
-	if err := llmClient.HealthCheck(healthCtx); err != nil {
-		healthCancel()
-		slog.Warn("LLM API is not reachable", "provider", llmProvider, "error", err)
-		slog.Info("Backend will start anyway. Configure LLM settings in UI.")
-	} else {
-		healthCancel()
-		slog.Info("LLM API OK", "provider", llmProvider, "url", llmURL, "model", llmModel)
 	}
 
 	var cacheClient *cache.Client
@@ -1367,6 +1349,18 @@ func main() {
 	settings, err := store.GetSettings(ctx)
 	if err != nil {
 		slog.Error("Failed to load settings", "error", err)
+	}
+
+	llmClient.Reconfigure(mustResolve(llmEnv, llm.DBConfigFromSettings(settings)))
+
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	if err := llmClient.HealthCheck(healthCtx); err != nil {
+		healthCancel()
+		slog.Warn("OpenRouter API is not reachable", "error", err)
+		slog.Info("Backend will start anyway. Configure LLM settings in UI.")
+	} else {
+		healthCancel()
+		slog.Info("OpenRouter API OK")
 	}
 
 	channel = primaryChannelFromSettings(settings, channel)
