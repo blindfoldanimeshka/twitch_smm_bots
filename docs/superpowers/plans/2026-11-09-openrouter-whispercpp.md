@@ -31,7 +31,7 @@
 ## Review Focus
 
 - OpenRouter omits `usage` or returns `cost: null`/absent → generation still succeeds, is not misclassified as paid, and does not charge a reservation.
-- `GET /key` times out or returns 5xx → `Generate` still attempts free-only and does not block for more than the request timeout.
+- `GET /key` times out or returns 5xx → `Generate` still attempts free-first (falling back to paid only when paid is allowed) and does not block for more than the request timeout.
 - Settings are saved from the masked UI with `llm_api_key: ""` → the stored database key must be preserved, not wiped.
 - `LLM_PAID_ENABLED` or `LLM_PAID_DAILY_CAP_USD` contains invalid text → resolution falls back to the database/default; a valid negative/zero cap means unlimited.
 - whisper.cpp returns `{"text": ""}` for silence or non-JSON on failure → empty text is a successful no-op, non-JSON is a clear error, and neither crashes the audio loop.
@@ -268,7 +268,7 @@ Add tests named and asserting:
 - `TestStatusNotConfigured` — an empty API key gives `Available=false` and `GenerationAvailable=false`; no HTTP request is made.
 - `TestReconfigureUpdatesFieldsAndResetsKeyCache` — change URL/models/key; getters reflect it and a subsequent health check hits the new URL.
 
-To make time deterministic, add an unexported `now func() time.Time` field on `Client` (default `time.Now`) and set it in cooldown tests.
+To make time deterministic, add an unexported `now func() time.Time` field on `Client` (default `time.Now`) and set it in cooldown tests. The test HTTP handler must branch on `r.URL.Path`: `/key` returns the key envelope, `/chat/completions` captures the body and counts only completion calls. Any test that seeds the key cache must set a fresh `FetchedAt` so `Generate` does not refresh it first.
 
 - [ ] **Step 2: Run to verify the tests fail**
 
