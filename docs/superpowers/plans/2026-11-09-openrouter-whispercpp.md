@@ -138,7 +138,7 @@ git commit -m "feat(settings): add OpenRouter paid fallback columns and migratio
 **Interfaces:**
 - Consumes: `*storage.Settings`.
 - Produces:
-  - `type Config struct { BaseURL, APIKey, FreeModel, PaidModel string; PaidEnabled bool; PaidDailyCapUSD float64; Referer, Title string; HTTPClient *http.Client }`
+  - `type Config struct { Provider, BaseURL, APIKey, FreeModel, PaidModel string; PaidEnabled bool; PaidDailyCapUSD float64; Referer, Title string; HTTPClient *http.Client }` — `Provider` is resolved here so the DB > env > default precedence is observable and Task 3 can report it.
   - `type EnvConfig struct { APIKey, LegacyAPIKey, Provider, BaseURL, FreeModel, PaidModel, PaidEnabled, PaidDailyCapUSD, Referer, Title string }`
   - `type DBConfig struct { Provider, BaseURL, FreeModel, PaidModel, APIKey string; PaidEnabled *bool; PaidDailyCapUSD *float64 }` — pointers distinguish "no row" (`nil`) from a stored `false`/`0`.
   - `const KeySourceEnv = "env"`, `KeySourceDatabase = "database"`, `KeySourceNone = "none"`
@@ -192,7 +192,7 @@ OPENROUTER_REFERER, OPENROUTER_TITLE
 `ResolveConfig` rules:
 
 1. Key: `env.APIKey`, else `db.APIKey`, else `env.LegacyAPIKey`; set source accordingly.
-2. Provider/URL/free/paid: first non-empty of `db`, `env`, default. `Config` does not expose `Provider`; the client always reports `openrouter` (add a `Provider` constant if the implementer finds it clearer).
+2. Provider/URL/free/paid: first non-empty of `db`, `env`, default. Store the resolved provider in `Config.Provider`; the client reports it from there.
 3. Paid enabled/cap: if the env string is non-empty **and parses**, use it; otherwise if the DB pointer is non-nil use the pointed value; otherwise use the default.
 4. Referer/title: env non-empty else default; never from DB.
 5. `HTTPClient` stays nil; `NewClient` supplies the 30 s default.
@@ -230,7 +230,7 @@ git commit -m "feat(llm): resolve OpenRouter config from env and database"
   - `func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error)`
   - `func (c *Client) HealthCheck(ctx context.Context) error`
   - `func (c *Client) Status(ctx context.Context) Status`
-  - `func (c *Client) GetProvider() string`, `GetModel() string` (free model), `GetURL() string`
+  - `func (c *Client) GetProvider() string` returns `cfg.Provider`; `GetModel() string` returns the free model; `GetURL() string` returns `cfg.BaseURL`.
   - `type Status struct` with JSON tags: `available`, `generation_available`, `provider`, `free_model`, `paid_model`, `paid_enabled`, `paid_daily_cap_usd`, `paid_spent_today_usd`, `free_requests_limit`, `free_requests_remaining`, `free_requests_used`, `free_cooldown_until`, `inflight_paid_requests`, `last_error`, `checked_at`.
 
 - [ ] **Step 1: Write the failing routing and parsing tests**
@@ -280,7 +280,7 @@ Expected: FAIL — the old `lmstudio.go` has a different `NewClient` signature a
 Delete `internal/llm/lmstudio.go` in the same step. Implement:
 
 - `Client` holds `mu sync.Mutex`, `cfg Config`, `httpClient *http.Client`, `key keyInfo`, `budget budgetState`, `now func() time.Time`.
-- `NewClient` fills **empty string** fields (`BaseURL`, `FreeModel`, `PaidModel`, `Referer`, `Title`) from the built-in defaults and sets a 30 s HTTP client unless `cfg.HTTPClient` was provided. It must keep `PaidEnabled` and `PaidDailyCapUSD` exactly as given: `false` and `0` are meaningful values, not "unset".
+- `NewClient` fills **empty string** fields (`Provider`, `BaseURL`, `FreeModel`, `PaidModel`, `Referer`, `Title`) from the built-in defaults and sets a 30 s HTTP client unless `cfg.HTTPClient` was provided. It must keep `PaidEnabled` and `PaidDailyCapUSD` exactly as given: `false` and `0` are meaningful values, not "unset".
 - `Reconfigure` locks, replaces `cfg`, and resets `key.OK`/`key.FetchedAt` when `APIKey` or `BaseURL` changed.
 - `Generate` refreshes `/key` first when the cached key info is older than 30 s; a refresh failure is ignored and generation continues with the "free available" assumption. The refresh gets its own 3 s timeout and must not consume the caller's whole LLM timeout.
 - `Generate` locks only long enough to snapshot config/limits/reserve budget, then performs HTTP outside the lock, then locks to apply cost/cooldown. Reservations are released with the actual cost (or dropped) on every error path.
