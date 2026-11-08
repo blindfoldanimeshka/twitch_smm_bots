@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ type Handler struct {
 	hub             *Hub
 	llmClient       *llm.Client
 	cacheClient     CacheClient
+	envLookup       func(string) string
 }
 
 type CacheClient interface {
@@ -80,7 +82,18 @@ func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *l
 		hub:             hub,
 		llmClient:       llmClient,
 		cacheClient:     cacheClient,
+		envLookup:       os.Getenv,
 	}
+}
+
+// resolveSettings merges the stored settings with the process environment into a
+// fully resolved llm.Config and reports where the API key came from.
+func (h *Handler) resolveSettings(settings *storage.Settings) (llm.Config, string) {
+	lookup := h.envLookup
+	if lookup == nil {
+		lookup = os.Getenv
+	}
+	return llm.ResolveConfig(llm.EnvFromLookup(lookup), llm.DBConfigFromSettings(settings))
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -105,11 +118,15 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redis check
-	if err := h.cacheClient.Ping(ctx); err != nil {
-		checks["redis"] = "error: " + err.Error()
-		overallStatus = "degraded"
+	if h.cacheClient != nil {
+		if err := h.cacheClient.Ping(ctx); err != nil {
+			checks["redis"] = "error: " + err.Error()
+			overallStatus = "degraded"
+		} else {
+			checks["redis"] = "ok"
+		}
 	} else {
-		checks["redis"] = "ok"
+		checks["redis"] = "not configured"
 	}
 
 	// LLM API check
@@ -521,6 +538,13 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg, source := h.resolveSettings(settings)
+	settings.LLMApiKey = ""
+	settings.LLMApiKeySet = cfg.APIKey != ""
+	settings.LLMApiKeySource = source
+	settings.LLMPaidEnabledEffective = cfg.PaidEnabled
+	settings.LLMPaidDailyCapUSDEffective = cfg.PaidDailyCapUSD
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }
@@ -537,6 +561,19 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	oldSettings, _ := h.store.GetSettings(ctx)
+
+	// An empty incoming key means "keep the stored database key".
+	if settings.LLMApiKey == "" && oldSettings != nil {
+		settings.LLMApiKey = oldSettings.LLMApiKey
+	}
+
+	// Overwrite incoming computed fields from resolution so the client cannot
+	// fabricate effective values or key provenance.
+	cfg, source := h.resolveSettings(&settings)
+	settings.LLMApiKeySet = cfg.APIKey != ""
+	settings.LLMApiKeySource = source
+	settings.LLMPaidEnabledEffective = cfg.PaidEnabled
+	settings.LLMPaidDailyCapUSDEffective = cfg.PaidDailyCapUSD
 
 	if err := h.store.UpdateSettings(ctx, &settings); err != nil {
 		h.logSettingsChange("error", "Failed to save settings", nil)
@@ -660,6 +697,34 @@ func (h *Handler) calculateSettingsChanges(old, new *storage.Settings) map[strin
 		}
 	}
 
+	if old.LLMPaidModel != new.LLMPaidModel {
+		changes["llm_paid_model"] = map[string]interface{}{
+			"old": old.LLMPaidModel,
+			"new": new.LLMPaidModel,
+		}
+	}
+
+	if old.LLMPaidEnabled != new.LLMPaidEnabled {
+		changes["llm_paid_enabled"] = map[string]interface{}{
+			"old": old.LLMPaidEnabled,
+			"new": new.LLMPaidEnabled,
+		}
+	}
+
+	if old.LLMPaidDailyCapUSD != new.LLMPaidDailyCapUSD {
+		changes["llm_paid_daily_cap_usd"] = map[string]interface{}{
+			"old": old.LLMPaidDailyCapUSD,
+			"new": new.LLMPaidDailyCapUSD,
+		}
+	}
+
+	if old.LLMApiKey != new.LLMApiKey {
+		changes["llm_api_key"] = map[string]interface{}{
+			"old": "***",
+			"new": "***",
+		}
+	}
+
 	return changes
 }
 
@@ -696,6 +761,18 @@ func (h *Handler) formatSettingsChangeMessage(changes map[string]interface{}) st
 	if _, ok := changes["max_tokens"]; ok {
 		parts = append(parts, "Max tokens changed")
 	}
+	if _, ok := changes["llm_paid_model"]; ok {
+		parts = append(parts, "Paid model changed")
+	}
+	if _, ok := changes["llm_paid_enabled"]; ok {
+		parts = append(parts, "Paid mode changed")
+	}
+	if _, ok := changes["llm_paid_daily_cap_usd"]; ok {
+		parts = append(parts, "Paid daily cap changed")
+	}
+	if _, ok := changes["llm_api_key"]; ok {
+		parts = append(parts, "API key changed")
+	}
 
 	if len(parts) == 0 {
 		return "Settings saved (no changes detected)"
@@ -707,11 +784,12 @@ func (h *Handler) formatSettingsChangeMessage(changes map[string]interface{}) st
 func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 	if h.llmClient == nil {
 		respondJSON(w, map[string]interface{}{
-			"available": false,
-			"error":     "LLM client not initialized",
-			"provider":  "Unknown",
-			"model":     "N/A",
-			"url":       "N/A",
+			"available":            false,
+			"generation_available": false,
+			"error":                "LLM client not initialized",
+			"provider":             "Unknown",
+			"model":                "N/A",
+			"url":                  "N/A",
 		})
 		return
 	}
@@ -719,21 +797,30 @@ func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	err := h.llmClient.HealthCheck(ctx)
-	available := err == nil
-	provider := h.llmClient.GetProvider()
-	model := h.llmClient.GetModel()
-	url := h.llmClient.GetURL()
+	st := h.llmClient.Status(ctx)
 
 	response := map[string]interface{}{
-		"available": available,
-		"provider":  provider,
-		"model":     model,
-		"url":       url,
+		"available":               st.Available,
+		"generation_available":    st.GenerationAvailable,
+		"provider":                st.Provider,
+		"model":                   st.FreeModel,
+		"free_model":              st.FreeModel,
+		"paid_model":              st.PaidModel,
+		"url":                     h.llmClient.GetURL(),
+		"paid_enabled":            st.PaidEnabled,
+		"paid_daily_cap_usd":      st.PaidDailyCapUSD,
+		"paid_spent_today_usd":    st.PaidSpentTodayUSD,
+		"free_requests_limit":     st.FreeRequestsLimit,
+		"free_requests_remaining": st.FreeRequestsRemaining,
+		"free_requests_used":      st.FreeRequestsUsed,
+		"free_cooldown_until":     st.FreeCooldownUntil,
+		"inflight_paid_requests":  st.InflightPaidRequests,
+		"last_error":              st.LastError,
+		"checked_at":              st.CheckedAt,
 	}
 
-	if err != nil {
-		response["error"] = err.Error()
+	if st.LastError != "" {
+		response["error"] = st.LastError
 	}
 
 	respondJSON(w, response)

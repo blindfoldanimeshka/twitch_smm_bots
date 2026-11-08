@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 )
 
@@ -51,6 +52,11 @@ func (m *MockBotManager) DeleteBot(ctx context.Context, id string) error {
 
 func (m *MockBotManager) StartBot(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockBotManager) StartBotWithOptions(ctx context.Context, id string, disableLLM bool) error {
+	args := m.Called(ctx, id, disableLLM)
 	return args.Error(0)
 }
 
@@ -198,6 +204,31 @@ func (m *MockStore) DeleteProxy(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
+// MockSettingsManager is a mock implementation of SettingsManager.
+type MockSettingsManager struct {
+	mock.Mock
+}
+
+func (m *MockSettingsManager) ApplySettings(ctx context.Context, settings *storage.Settings) error {
+	args := m.Called(ctx, settings)
+	return args.Error(0)
+}
+
+func (m *MockSettingsManager) GetAudioContext() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *MockSettingsManager) TestLLMGeneration(ctx context.Context, personality string) (string, error) {
+	args := m.Called(ctx, personality)
+	return args.String(0), args.Error(1)
+}
+
+// fixedEnv returns an env lookup backed by the given map.
+func fixedEnv(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
+
 func TestHealthCheck(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
@@ -210,7 +241,7 @@ func TestHealthCheck(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string]string
+	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", response["status"])
@@ -399,6 +430,8 @@ func TestUpdateSettings(t *testing.T) {
 		mockStore := new(MockStore)
 		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
 
+		mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
 		req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte("invalid json")))
 		w := httptest.NewRecorder()
 
@@ -468,4 +501,233 @@ func TestStopBot(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "stopped", response["status"])
 	})
+}
+
+func TestGetSettingsMasksAPIKeyAndReportsSource(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.envLookup = fixedEnv(nil)
+
+	stored := &storage.Settings{
+		ID:        "default",
+		LLMApiKey: "sk-db",
+	}
+	mockStore.On("GetSettings", mock.Anything).Return(stored, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	handler.GetSettings(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "", body["llm_api_key"])
+	assert.Equal(t, true, body["llm_api_key_set"])
+	assert.Equal(t, "database", body["llm_api_key_source"])
+}
+
+func TestGetSettingsReportsEnvKey(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.envLookup = fixedEnv(map[string]string{
+		"OPENROUTER_API_KEY": "sk-env",
+	})
+
+	stored := &storage.Settings{
+		ID:        "default",
+		LLMApiKey: "sk-db",
+	}
+	mockStore.On("GetSettings", mock.Anything).Return(stored, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	handler.GetSettings(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "env", body["llm_api_key_source"])
+	assert.Equal(t, true, body["llm_api_key_set"])
+	assert.NotContains(t, w.Body.String(), "sk-env")
+	assert.NotContains(t, w.Body.String(), "sk-db")
+}
+
+func TestGetSettingsReportsPaidEnvOverride(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.envLookup = fixedEnv(map[string]string{
+		"LLM_PAID_ENABLED":       "true",
+		"LLM_PAID_DAILY_CAP_USD": "0.25",
+	})
+
+	stored := &storage.Settings{
+		ID:                 "default",
+		LLMPaidEnabled:     false,
+		LLMPaidDailyCapUSD: 0.5,
+	}
+	mockStore.On("GetSettings", mock.Anything).Return(stored, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	handler.GetSettings(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body storage.Settings
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, true, body.LLMPaidEnabledEffective)
+	assert.Equal(t, 0.25, body.LLMPaidDailyCapUSDEffective)
+}
+
+func TestUpdateSettingsPreservesStoredKeyWhenEmpty(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.settingsManager = mockSettings
+	handler.envLookup = fixedEnv(nil)
+
+	oldSettings := &storage.Settings{
+		ID:        "default",
+		LLMApiKey: "sk-db",
+	}
+	mockStore.On("GetSettings", mock.Anything).Return(oldSettings, nil)
+
+	var storeReceived *storage.Settings
+	mockStore.On("UpdateSettings", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { storeReceived = args.Get(1).(*storage.Settings) }).
+		Return(nil)
+	mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
+	mockSettings.On("ApplySettings", mock.Anything, mock.MatchedBy(func(s *storage.Settings) bool {
+		return s.LLMApiKey == "sk-db"
+	})).Return(nil)
+
+	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": ""})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, storeReceived)
+	assert.Equal(t, "sk-db", storeReceived.LLMApiKey)
+	mockSettings.AssertExpectations(t)
+}
+
+func TestUpdateSettingsUsesIncomingKeyWhenProvided(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler.settingsManager = mockSettings
+	handler.envLookup = fixedEnv(nil)
+
+	oldSettings := &storage.Settings{
+		ID:        "default",
+		LLMApiKey: "sk-db",
+	}
+	mockStore.On("GetSettings", mock.Anything).Return(oldSettings, nil)
+
+	var storeReceived *storage.Settings
+	mockStore.On("UpdateSettings", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { storeReceived = args.Get(1).(*storage.Settings) }).
+		Return(nil)
+	mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
+	mockSettings.On("ApplySettings", mock.Anything, mock.MatchedBy(func(s *storage.Settings) bool {
+		return s.LLMApiKey == "sk-new"
+	})).Return(nil)
+
+	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": "sk-new"})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, storeReceived)
+	assert.Equal(t, "sk-new", storeReceived.LLMApiKey)
+	mockSettings.AssertExpectations(t)
+}
+
+func TestGetLLMStatusIncludesGenerationFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"usage_daily":0.1,"free_model_daily_requests":{"limit":50,"remaining":50,"used":0}}}`))
+			return
+		}
+		t.Errorf("unexpected path %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	client := llm.NewClient(llm.Config{
+		BaseURL:         srv.URL,
+		APIKey:          "sk-test",
+		FreeModel:       "openrouter/free",
+		PaidModel:       "z-ai/glm-5.3-flash",
+		PaidEnabled:     true,
+		PaidDailyCapUSD: 1.0,
+	})
+
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, client, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/llm/status", nil)
+	w := httptest.NewRecorder()
+	handler.GetLLMStatus(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+
+	for _, key := range []string{"available", "generation_available", "model", "free_model", "url", "paid_spent_today_usd", "free_requests_remaining", "inflight_paid_requests"} {
+		_, ok := body[key]
+		assert.True(t, ok, "missing key %q", key)
+	}
+	assert.Equal(t, true, body["generation_available"])
+}
+
+func TestCalculateSettingsChangesIncludesPaidFields(t *testing.T) {
+	handler := &Handler{}
+	old := &storage.Settings{
+		LLMPaidModel:       "old-paid",
+		LLMPaidEnabled:     true,
+		LLMPaidDailyCapUSD: 1.0,
+	}
+	new := &storage.Settings{
+		LLMPaidModel:       "new-paid",
+		LLMPaidEnabled:     false,
+		LLMPaidDailyCapUSD: 0.5,
+	}
+
+	changes := handler.calculateSettingsChanges(old, new)
+
+	assert.Contains(t, changes, "llm_paid_model")
+	assert.Contains(t, changes, "llm_paid_enabled")
+	assert.Contains(t, changes, "llm_paid_daily_cap_usd")
+}
+
+func TestCalculateSettingsChangesMasksAPIKey(t *testing.T) {
+	handler := &Handler{}
+	old := &storage.Settings{LLMApiKey: "sk-db"}
+	new := &storage.Settings{LLMApiKey: "sk-new"}
+
+	changes := handler.calculateSettingsChanges(old, new)
+
+	entry, ok := changes["llm_api_key"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "***", entry["old"])
+	assert.Equal(t, "***", entry["new"])
+
+	same := handler.calculateSettingsChanges(old, old)
+	assert.NotContains(t, same, "llm_api_key")
 }
