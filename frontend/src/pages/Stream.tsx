@@ -22,11 +22,11 @@ function formatTime(iso: string): string {
 }
 
 export default function Stream() {
-  // Shared ['settings'] cache (same key as the Topbar), so no extra requests.
+  // Shared ['settings'] cache (same key as the Topbar, which owns the polling;
+  // the app-level LiveDataBridge invalidates it when settings change).
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => (await api.getSettings()).data,
-    refetchInterval: 30_000,
   })
   const channels = settings?.channels.filter((c) => c.trim() !== '') ?? []
 

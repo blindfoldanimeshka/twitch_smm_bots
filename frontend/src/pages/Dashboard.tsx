@@ -1,11 +1,10 @@
-import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot as BotIcon, MessageSquare, Users } from 'lucide-react'
 import { api, getErrorMessage, type Bot } from '../api/client'
 import { useStats } from '../hooks/useStats'
 import { useStreamStatus } from '../hooks/useStreamStatus'
-import { useWebSocketSubscription, type WSMessage } from '../hooks/useWebSocket'
 import { PageHeader } from '../components/layout/PageHeader'
+import { useAppNavigate } from '../components/layout/navigation'
 import { Alert } from '../components/ui/Alert'
 import { Badge, type BadgeTone } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -13,7 +12,7 @@ import { Card } from '../components/ui/Card'
 import { EmptyState } from '../components/ui/EmptyState'
 import { StatCard } from '../components/ui/StatCard'
 import { StreamCard } from '../components/StreamCard'
-import { SetupBanner, navigateToPage } from '../components/SetupBanner'
+import { SetupBanner } from '../components/SetupBanner'
 
 /** Bot mutation helper: every successful action refreshes bots and stats. */
 function useBotMutation<T>(mutationFn: (arg: T) => Promise<unknown>) {
@@ -45,7 +44,6 @@ function useOpenRouterKeyMissing(): boolean {
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => (await api.getSettings()).data,
-    refetchInterval: 30_000,
   })
 
   const settingsSayMissing =
@@ -81,7 +79,7 @@ function presenceBadge(bot: Bot): { tone: BadgeTone; label: string } {
 }
 
 export default function Dashboard() {
-  const queryClient = useQueryClient()
+  const navigate = useAppNavigate()
 
   const { data: bots = [] } = useQuery({
     queryKey: ['bots'],
@@ -90,11 +88,11 @@ export default function Dashboard() {
 
   const { data: stats } = useStats()
 
-  // Shared ['settings'] cache (same key as the Topbar), so no extra requests.
+  // Shared ['settings'] cache (same key as the Topbar, which owns the polling;
+  // the app-level LiveDataBridge invalidates it when settings change).
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => (await api.getSettings()).data,
-    refetchInterval: 30_000,
   })
   const channels = settings?.channels.filter((c) => c.trim() !== '') ?? []
   const channel = channels[0] ?? ''
@@ -108,19 +106,6 @@ export default function Dashboard() {
   const stopAll = useBotMutation(() => api.stopAll())
 
   const mutationError = startBot.error ?? stopBot.error ?? startAll.error ?? stopAll.error
-
-  // Shared WebSocket (no new socket): refresh bots and stats on changes.
-  useWebSocketSubscription(
-    useCallback(
-      (msg: WSMessage) => {
-        if (msg.type === 'bot_status_changed' || msg.type === 'stats_updated') {
-          queryClient.invalidateQueries({ queryKey: ['bots'] })
-          queryClient.invalidateQueries({ queryKey: ['stats'] })
-        }
-      },
-      [queryClient],
-    ),
-  )
 
   const viewersKnown = streamStatus?.live === true && !streamStatus.error
 
@@ -199,7 +184,7 @@ export default function Dashboard() {
                 icon={BotIcon}
                 title="Пока нет ботов"
                 description="Создайте первого бота — он появится в этой таблице."
-                action={<Button onClick={() => navigateToPage('bots')}>Добавить бота</Button>}
+                action={<Button onClick={() => navigate('bots')}>Добавить бота</Button>}
               />
             ) : (
               <table className="table">

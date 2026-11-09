@@ -1,7 +1,9 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { WebSocketProvider } from './hooks/useWebSocket'
+import { LiveDataBridge } from './components/LiveDataBridge'
 import { Sidebar, type Page } from './components/layout/Sidebar'
+import { NavigationProvider } from './components/layout/navigation'
 import { Topbar } from './components/layout/Topbar'
 import Dashboard from './pages/Dashboard'
 import Stream from './pages/Stream'
@@ -70,22 +72,26 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <WebSocketProvider>
-        <QueryClientProvider client={queryClient}>
-          <div className="app-shell">
-            <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
-            <div className="app-main">
-              <Topbar title={PAGE_TITLES[currentPage]} onNavigate={setCurrentPage} />
-              <main className="app-content">
-                {currentPage === 'dashboard' && <Dashboard />}
-                {currentPage === 'stream' && <Stream />}
-                {currentPage === 'bots' && <Bots />}
-                {currentPage === 'settings' && <Settings />}
-              </main>
+      <QueryClientProvider client={queryClient}>
+        <WebSocketProvider>
+          {/* One owner of live invalidation for every page. */}
+          <LiveDataBridge />
+          <NavigationProvider value={setCurrentPage}>
+            <div className="app-shell">
+              <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
+              <div className="app-main">
+                <Topbar title={PAGE_TITLES[currentPage]} onNavigate={setCurrentPage} />
+                <main className="app-content">
+                  {currentPage === 'dashboard' && <Dashboard />}
+                  {currentPage === 'stream' && <Stream />}
+                  {currentPage === 'bots' && <Bots />}
+                  {currentPage === 'settings' && <Settings />}
+                </main>
+              </div>
             </div>
-          </div>
-        </QueryClientProvider>
-      </WebSocketProvider>
+          </NavigationProvider>
+        </WebSocketProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   )
 }

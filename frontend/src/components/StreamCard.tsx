@@ -6,7 +6,7 @@ import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { EmptyState } from './ui/EmptyState'
-import { navigateToPage } from './SetupBanner'
+import { useAppNavigate } from './layout/navigation'
 
 /** Formats seconds as a compact clock uptime («1:04:32»). */
 function formatUptime(seconds: number): string {
@@ -70,6 +70,8 @@ interface StreamCardProps {
  * state handling — offline, GQL failure (player stays) and no-channel (CTA).
  */
 export function StreamCard({ status, channel = '', compact = false, className }: StreamCardProps) {
+  const navigate = useAppNavigate()
+
   // The monitor reports `configured: false` (with no error) when the backend
   // does not track this channel yet — treat that the same as no channel.
   const hasChannel = channel !== '' && (status === undefined || status.configured)
@@ -106,9 +108,7 @@ export function StreamCard({ status, channel = '', compact = false, className }:
         icon={Settings}
         title="Канал не задан"
         description="Добавьте хотя бы один Twitch-канал в настройках, чтобы следить за стримом, зрителями и чатом."
-        action={
-          <Button onClick={() => navigateToPage('settings')}>Открыть настройки</Button>
-        }
+        action={<Button onClick={() => navigate('settings')}>Открыть настройки</Button>}
       />
     )
   } else if (loading) {
