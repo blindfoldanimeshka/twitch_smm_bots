@@ -2,6 +2,7 @@ package twitch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -92,7 +93,9 @@ func TestStreamMonitorLive(t *testing.T) {
 	assert.True(t, status.Live)
 	assert.Equal(t, "hello", status.Title)
 	assert.Equal(t, "Just Chatting", status.Game)
-	assert.GreaterOrEqual(t, status.UptimeSeconds, 120.0)
+	require.NotNil(t, status.StartedAt, "live status must carry started_at")
+	assert.Equal(t, started.UTC(), *status.StartedAt)
+	assert.GreaterOrEqual(t, status.UptimeSeconds, int64(120))
 	assert.Equal(t, 100, status.ViewersTotal)
 	assert.Equal(t, 2, status.ActiveViewers)
 	assert.Equal(t, 98, status.PassiveViewers)
@@ -115,6 +118,8 @@ func TestStreamMonitorOffline(t *testing.T) {
 
 	require.True(t, status.Configured)
 	assert.False(t, status.Live)
+	assert.Nil(t, status.StartedAt, "offline status must not carry started_at")
+	assert.Equal(t, int64(0), status.UptimeSeconds)
 	assert.Equal(t, 0, status.ViewersTotal)
 	assert.Equal(t, 0, status.ActiveViewers)
 	assert.Equal(t, 0, status.PassiveViewers)
@@ -223,6 +228,43 @@ func TestStreamMonitorExplicitChannel(t *testing.T) {
 	status := mon.Snapshot(context.Background(), "b", nil)
 
 	assert.Equal(t, "b", status.Channel)
+}
+
+// TestStreamStatusJSONOmitsZeroStartedAt is the regression test for the
+// omitempty-on-struct bug: time.Time is a struct, so a zero value was always
+// serialized as "0001-01-01T00:00:00Z". Only a *time.Time nil pointer omits it.
+func TestStreamStatusJSONOmitsZeroStartedAt(t *testing.T) {
+	payload, err := json.Marshal(StreamStatus{Configured: false})
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "started_at", "unconfigured status must not carry started_at")
+
+	started := time.Now().Add(-2 * time.Minute).UTC()
+	payload, err = json.Marshal(StreamStatus{
+		Configured:    true,
+		Live:          true,
+		StartedAt:     &started,
+		UptimeSeconds: int64(time.Since(started).Seconds()),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"started_at":`, "live status must carry started_at")
+	assert.Contains(t, string(payload), `"uptime_seconds":120`, "uptime_seconds must be an integer JSON number")
+}
+
+// TestStreamMonitorFutureStartedAtClampsUptime guards against negative uptime
+// from clock skew between Twitch and this host.
+func TestStreamMonitorFutureStartedAtClampsUptime(t *testing.T) {
+	public := &fakeStreamProvider{info: &PublicStreamInfo{
+		Live:        true,
+		ViewerCount: 5,
+		StartedAt:   time.Now().Add(time.Minute), // starts in the future
+	}}
+	mon, _ := newFakeMonitor(public, nil)
+	mon.SetChannels([]string{"a"})
+
+	status := mon.Snapshot(context.Background(), "", nil)
+
+	assert.True(t, status.Live)
+	assert.Equal(t, int64(0), status.UptimeSeconds)
 }
 
 func TestStreamMonitorCloseStopsChats(t *testing.T) {

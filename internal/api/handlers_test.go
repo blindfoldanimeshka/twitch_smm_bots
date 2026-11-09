@@ -832,6 +832,7 @@ func TestGetStreamStatusNoChannel(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, false, body["configured"])
+	assert.NotContains(t, w.Body.String(), "started_at", "unconfigured status must not carry started_at")
 }
 
 func TestGetStreamStatusNilMonitor(t *testing.T) {
@@ -850,13 +851,15 @@ func TestGetStreamStatusNilMonitor(t *testing.T) {
 }
 
 func TestGetStreamStatusLive(t *testing.T) {
+	started := time.Now().Add(-2 * time.Minute).UTC()
 	provider := &FakeStreamStatusProvider{status: twitch.StreamStatus{
 		Configured:     true,
 		Channel:        "a",
 		Live:           true,
 		Title:          "hello",
 		Game:           "Just Chatting",
-		UptimeSeconds:  120.5,
+		StartedAt:      &started,
+		UptimeSeconds:  120,
 		ViewersTotal:   100,
 		ActiveViewers:  2,
 		PassiveViewers: 98,
@@ -876,11 +879,11 @@ func TestGetStreamStatusLive(t *testing.T) {
 
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	for _, key := range []string{"uptime_seconds", "viewers_total", "active_viewers", "passive_viewers", "messages"} {
+	for _, key := range []string{"started_at", "uptime_seconds", "viewers_total", "active_viewers", "passive_viewers", "messages"} {
 		_, ok := body[key]
 		assert.True(t, ok, "missing key %q", key)
 	}
-	assert.Equal(t, 120.5, body["uptime_seconds"])
+	assert.Equal(t, 120.0, body["uptime_seconds"])
 	assert.Equal(t, 100.0, body["viewers_total"])
 	assert.Equal(t, 2.0, body["active_viewers"])
 	assert.Equal(t, 98.0, body["passive_viewers"])

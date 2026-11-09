@@ -32,8 +32,8 @@ type StreamStatus struct {
 	Live                bool          `json:"live"`
 	Title               string        `json:"title"`
 	Game                string        `json:"game"`
-	StartedAt           time.Time     `json:"started_at,omitempty"`
-	UptimeSeconds       float64       `json:"uptime_seconds"`
+	StartedAt           *time.Time    `json:"started_at,omitempty"`
+	UptimeSeconds       int64         `json:"uptime_seconds"`
 	ViewersTotal        int           `json:"viewers_total"`
 	ActiveViewers       int           `json:"active_viewers"`
 	PassiveViewers      int           `json:"passive_viewers"`
@@ -214,8 +214,10 @@ func (m *StreamMonitor) Snapshot(ctx context.Context, channel string, excludeLog
 	status.Title = info.Title
 	status.Game = info.GameName
 	if !info.StartedAt.IsZero() {
-		status.StartedAt = info.StartedAt.UTC()
-		status.UptimeSeconds = time.Since(info.StartedAt).Seconds()
+		started := info.StartedAt.UTC()
+		status.StartedAt = &started
+		// Clamp to zero: a clock skew with Twitch must not yield negative uptime.
+		status.UptimeSeconds = max(0, int64(time.Since(info.StartedAt).Seconds()))
 	}
 	status.ViewersTotal = info.ViewerCount
 	status.PassiveViewers = max(0, status.ViewersTotal-status.ActiveViewers)
