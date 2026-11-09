@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { UserPlus } from 'lucide-react'
+import { UserPlus, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api/client'
 import type { Bot } from '../api/client'
 import { PageHeader } from '../components/layout/PageHeader'
-import { BotsTable, type BotTableAction } from '../components/BotsTable'
+import { BotsTable } from '../components/BotsTable'
 import { BotModal } from '../components/BotModal'
 import { BotLogsDrawer } from '../components/BotLogsDrawer'
 import { Alert } from '../components/ui/Alert'
@@ -20,7 +20,7 @@ export default function Bots() {
   const [editingBot, setEditingBot] = useState<Bot | null>(null)
   const [deletingBot, setDeletingBot] = useState<Bot | null>(null)
   const [logsBot, setLogsBot] = useState<Bot | null>(null)
-  const [pending, setPending] = useState<{ id: string; action: BotTableAction } | null>(null)
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set())
 
   const { data: bots = [] } = useQuery({
     queryKey: ['bots'],
@@ -68,22 +68,65 @@ export default function Bots() {
     },
   })
 
+  // A Set keeps each row's spinner independent when several actions are in flight.
+  const markPending = (bot: Bot) =>
+    setPendingIds((prev) => new Set(prev).add(bot.id))
+
+  const unmarkPending = (bot: Bot) =>
+    setPendingIds((prev) => {
+      if (!prev.has(bot.id)) {
+        return prev
+      }
+      const next = new Set(prev)
+      next.delete(bot.id)
+      return next
+    })
+
   const startBot = useMutation({
     mutationFn: (bot: Bot) => api.startBot(bot.id),
-    onMutate: (bot) => setPending({ id: bot.id, action: 'start' }),
-    onSettled: () => setPending(null),
+    onMutate: markPending,
+    onSettled: (_data, _error, bot) => unmarkPending(bot),
     onSuccess: invalidateAfterAction,
   })
 
   const stopBot = useMutation({
     mutationFn: (bot: Bot) => api.stopBot(bot.id),
-    onMutate: (bot) => setPending({ id: bot.id, action: 'stop' }),
-    onSettled: () => setPending(null),
+    onMutate: markPending,
+    onSettled: (_data, _error, bot) => unmarkPending(bot),
     onSuccess: invalidateAfterAction,
   })
 
-  const actionError = deleteBot.error ?? startBot.error ?? stopBot.error
+  // Delete errors render inside the delete modal; start/stop errors as a
+  // dismissible page-level alert.
+  const actionError = startBot.error ?? stopBot.error
   const modalError = createBot.error ?? updateBot.error
+
+  const clearActionErrors = () => {
+    startBot.reset()
+    stopBot.reset()
+  }
+
+  const handleStart = (bot: Bot) => {
+    clearActionErrors()
+    startBot.mutate(bot)
+  }
+
+  const handleStop = (bot: Bot) => {
+    clearActionErrors()
+    stopBot.mutate(bot)
+  }
+
+  const handleDeleteClose = () => {
+    deleteBot.reset()
+    setDeletingBot(null)
+  }
+
+  const handleDeleteConfirm = () => {
+    if (deletingBot) {
+      deleteBot.reset()
+      deleteBot.mutate(deletingBot.id)
+    }
+  }
 
   const handleSubmit = (data: BotFormData) => {
     if (editingBot) {
@@ -119,14 +162,28 @@ export default function Bots() {
       />
 
       <div style={{ display: 'grid', gap: 16 }}>
-        {actionError && <Alert variant="error">{getErrorMessage(actionError)}</Alert>}
+        {actionError && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <Alert variant="error">{getErrorMessage(actionError)}</Alert>
+            </div>
+            <button
+              type="button"
+              className="modal__close"
+              aria-label="Закрыть"
+              onClick={clearActionErrors}
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
+        )}
 
         <Card title={`Список ботов (${bots.length})`}>
           <BotsTable
             bots={bots}
-            pending={pending}
-            onStart={(bot) => startBot.mutate(bot)}
-            onStop={(bot) => stopBot.mutate(bot)}
+            pendingIds={pendingIds}
+            onStart={handleStart}
+            onStop={handleStop}
             onEdit={openEdit}
             onDelete={setDeletingBot}
             onShowLogs={setLogsBot}
@@ -150,28 +207,29 @@ export default function Bots() {
 
       <Modal
         open={deletingBot !== null}
-        onClose={() => setDeletingBot(null)}
+        onClose={handleDeleteClose}
         title="Удалить бота?"
         width={440}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setDeletingBot(null)} disabled={deleteBot.isPending}>
+            <Button variant="secondary" onClick={handleDeleteClose} disabled={deleteBot.isPending}>
               Отмена
             </Button>
-            <Button
-              variant="danger"
-              loading={deleteBot.isPending}
-              onClick={() => deletingBot && deleteBot.mutate(deletingBot.id)}
-            >
+            <Button variant="danger" loading={deleteBot.isPending} onClick={handleDeleteConfirm}>
               Удалить
             </Button>
           </>
         }
       >
-        <p style={{ fontSize: 14 }}>
-          Бот <strong>{deletingBot?.name}</strong> (@{deletingBot?.twitch_login}) будет удалён.
-          Действие необратимо.
-        </p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          {deleteBot.error && (
+            <Alert variant="error">{getErrorMessage(deleteBot.error)}</Alert>
+          )}
+          <p style={{ fontSize: 14 }}>
+            Бот <strong>{deletingBot?.name}</strong> (@{deletingBot?.twitch_login}) будет удалён.
+            Действие необратимо.
+          </p>
+        </div>
       </Modal>
 
       <BotLogsDrawer bot={logsBot} onClose={() => setLogsBot(null)} />

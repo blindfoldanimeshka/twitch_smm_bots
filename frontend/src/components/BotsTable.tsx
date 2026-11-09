@@ -5,12 +5,10 @@ import { Badge, type BadgeTone } from './ui/Badge'
 import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 
-export type BotTableAction = 'start' | 'stop'
-
 interface BotsTableProps {
   bots: Bot[]
-  /** The start/stop action currently in flight, for per-row loading state. */
-  pending?: { id: string; action: BotTableAction } | null
+  /** IDs of bots with a start/stop action in flight; each row's spinner is independent. */
+  pendingIds?: ReadonlySet<string>
   onStart: (bot: Bot) => void
   onStop: (bot: Bot) => void
   onEdit: (bot: Bot) => void
@@ -43,7 +41,7 @@ function presenceBadge(bot: Bot): { tone: BadgeTone; label: string } {
 /** The bots table: login, name, personality, presence, delays, limit, actions. */
 export function BotsTable({
   bots,
-  pending,
+  pendingIds,
   onStart,
   onStop,
   onEdit,
@@ -98,7 +96,7 @@ export function BotsTable({
                       <Button
                         variant="secondary"
                         size="sm"
-                        loading={pending?.id === bot.id && pending.action === 'stop'}
+                        loading={pendingIds?.has(bot.id) ?? false}
                         onClick={() => onStop(bot)}
                       >
                         Стоп
@@ -107,7 +105,7 @@ export function BotsTable({
                       <Button
                         variant="accent"
                         size="sm"
-                        loading={pending?.id === bot.id && pending.action === 'start'}
+                        loading={pendingIds?.has(bot.id) ?? false}
                         onClick={() => onStart(bot)}
                       >
                         Старт
