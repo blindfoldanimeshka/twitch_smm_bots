@@ -12,6 +12,15 @@ import { SetupBanner } from '../components/SetupBanner'
 
 const EVENT_CAP = 50
 
+/** Formats an ISO timestamp as «HH:MM» for the chatter list. */
+function formatTime(iso: string): string {
+  const parsed = Date.parse(iso)
+  if (Number.isNaN(parsed)) {
+    return ''
+  }
+  return new Date(parsed).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
 export default function Stream() {
   // Shared ['settings'] cache (same key as the Topbar), so no extra requests.
   const { data: settings } = useQuery({
@@ -74,10 +83,36 @@ export default function Stream() {
           tone="info"
           title="Канал не задан"
           description="Добавьте Twitch-каналы в настройках — здесь появятся плеер, зрители и чат."
+          actionPage="settings"
         />
       ) : (
         <div style={{ display: 'grid', gap: 16 }}>
           <StreamCard status={status} channel={channel} />
+          <Card title="Активные чаттеры" subtitle="Писали в чат за последние 5 минут">
+            {status && status.chatters.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {status.chatters.slice(0, 10).map((chatter) => (
+                  <span
+                    key={chatter.login}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'baseline',
+                      gap: 6,
+                      padding: '4px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-pill)',
+                      fontSize: 13,
+                    }}
+                  >
+                    <strong>@{chatter.login}</strong>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>{formatTime(chatter.last_message_at)}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>Пока никто не писал</p>
+            )}
+          </Card>
           <Card title="Чат" subtitle={`Последние 50 сообщений канала ${channel} и события присутствия ботов`}>
             <ChatFeed messages={status?.messages ?? []} events={presenceEvents} />
           </Card>

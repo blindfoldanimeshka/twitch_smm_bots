@@ -120,12 +120,13 @@ export function StreamCard({ status, channel = '', compact = false, className }:
     )
   } else if (hasError && status) {
     // GQL failure: the player stays, the warning is calm and carries the time
-    // of the last update instead of fake zeros.
+    // of the last attempt (the backend stamps `updated_at` before it knows
+    // whether the request succeeds) instead of fake zeros.
     body = (
       <>
         {player}
         <Alert variant="warning" title="Не удалось получить данные Twitch">
-          Метрики появятся, когда Twitch снова ответит. Последнее обновление: {formatClock(status.updated_at)}.
+          Метрики появятся, когда Twitch снова ответит. Последняя попытка обновления: {formatClock(status.updated_at)}.
         </Alert>
       </>
     )

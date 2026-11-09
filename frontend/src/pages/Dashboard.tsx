@@ -135,6 +135,7 @@ export default function Dashboard() {
             tone="info"
             title="Канал не задан"
             description="Добавьте Twitch-канал в настройках — без него не видно стрима, зрителей и чата."
+            actionPage="settings"
           />
         )}
         {openRouterKeyMissing && (
@@ -142,6 +143,7 @@ export default function Dashboard() {
             tone="warning"
             title="OpenRouter не настроен"
             description="Боты не смогут генерировать сообщения, пока не задан API-ключ OpenRouter."
+            actionPage="settings"
           />
         )}
 
