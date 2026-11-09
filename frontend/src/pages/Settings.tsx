@@ -93,8 +93,9 @@ function normalizeSettings(settings: SettingsType): SettingsType {
 
 /**
  * Deep compare of the form against the last synced/saved baseline.
- * `updated_at` (the server stamps a new one on every save) and `llm_api_key`
- * (never echoed back by the server) are deliberately excluded.
+ * `updated_at` (the server stamps a new one on every save) is excluded;
+ * `llm_api_key` is excluded here because it never round-trips through the
+ * server — the `dirty` memo counts a typed key separately.
  */
 function settingsFormEqual(a: SettingsType, b: SettingsType): boolean {
   for (const key of Object.keys(a) as (keyof SettingsType)[]) {
@@ -110,12 +111,20 @@ function settingsFormEqual(a: SettingsType, b: SettingsType): boolean {
   return true
 }
 
-/** Clamp a typed token limit into the backend-accepted 20..200 range. */
-function clampMaxTokens(raw: string): number | null {
+/**
+ * Parse a token-limit keystroke without normalizing it: mid-typing values
+ * (like the "5" of "50") must reach the DOM untouched. null = ignore this
+ * input (empty or garbage) and keep the previous value.
+ */
+function parseMaxTokensInput(raw: string): number | null {
   if (raw.trim() === '') return null // empty input: keep the previous value, never send 0
   const parsed = Number(raw)
-  if (!Number.isFinite(parsed)) return null
-  return Math.min(200, Math.max(20, Math.round(parsed)))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/** Clamp a finalized token limit into the backend-accepted 20..200 range. */
+function clampMaxTokensValue(value: number): number {
+  return Math.min(200, Math.max(20, Math.round(value)))
 }
 
 function SwitchField({
@@ -210,9 +219,15 @@ export default function Settings() {
   // Baseline = the settings the server last returned (or that we last saved).
   // While the form differs from it (`dirty`), server data is never applied on
   // top of the user's unsaved edits — the Topbar polls ['settings'] every 30s.
+  // `llm_api_key` never comes back from the server, so it has no comparable
+  // baseline value: any typed (non-empty) key counts as an unsaved edit too,
+  // otherwise a background refetch would silently wipe the input.
   const [baseline, setBaseline] = useState<SettingsType | null>(null)
   const dirty = useMemo(
-    () => (baseline ? !settingsFormEqual(formState, baseline) : false),
+    () =>
+      baseline
+        ? !settingsFormEqual(formState, baseline) || formState.llm_api_key !== ''
+        : false,
     [formState, baseline],
   )
 
@@ -236,11 +251,19 @@ export default function Settings() {
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
       // What we just saved is now the server truth: rebase the baseline onto
-      // it and align the channel inputs (trim/drop empties) so `dirty`
-      // clears and background sync works again.
+      // it and align the form with what the server actually stored —
+      // trim/drop empty channels, the clamped token limit, and a now-saved
+      // API key (cleared from the input) — so `dirty` clears and background
+      // sync works again.
       const normalized = normalizeSettings(variables)
-      setBaseline(normalized)
-      setFormState((prev) => ({ ...prev, channels: normalized.channels }))
+      const savedMaxTokens = clampMaxTokensValue(normalized.max_tokens)
+      setBaseline({ ...normalized, max_tokens: savedMaxTokens })
+      setFormState((prev) => ({
+        ...prev,
+        channels: normalized.channels,
+        max_tokens: savedMaxTokens,
+        llm_api_key: '',
+      }))
       setSaveError(null)
       setSaveSuccess(true)
       window.setTimeout(() => setSaveSuccess(false), 4000)
@@ -311,6 +334,9 @@ export default function Settings() {
     updateSettingsMutation.mutate({
       ...formState,
       channels,
+      // Final clamp: a half-typed value that never got blurred still must
+      // not reach the backend outside 20..200.
+      max_tokens: clampMaxTokensValue(formState.max_tokens),
       updated_at: new Date().toISOString(),
     })
   }
@@ -625,8 +651,13 @@ export default function Settings() {
               max={200}
               value={formState.max_tokens}
               onChange={(e) => {
-                const next = clampMaxTokens(e.target.value)
+                // No clamping mid-typing: it would make "50" impossible to enter.
+                const next = parseMaxTokensInput(e.target.value)
                 if (next !== null) update('max_tokens', next)
+              }}
+              onBlur={(e) => {
+                const next = parseMaxTokensInput(e.target.value)
+                if (next !== null) update('max_tokens', clampMaxTokensValue(next))
               }}
             />
           </div>
