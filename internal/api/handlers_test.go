@@ -339,8 +339,8 @@ func TestGetSettings(t *testing.T) {
 			AudioEnabled:     true,
 			RotationEnabled:  false,
 			RotationInterval: 60,
-			LLMProvider:      "lmstudio",
-			LLMApiURL:        "http://localhost:1234/v1",
+			LLMProvider:      "openrouter",
+			LLMApiURL:        "https://openrouter.ai/api/v1",
 			LLMModel:         "test-model",
 			LLMApiKey:        "",
 			TwitchClientID:     "test-client-id",
@@ -361,7 +361,7 @@ func TestGetSettings(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &settings)
 		require.NoError(t, err)
 		assert.Equal(t, "default", settings.ID)
-		assert.Equal(t, "lmstudio", settings.LLMProvider)
+		assert.Equal(t, "openrouter", settings.LLMProvider)
 		assert.Equal(t, "test-client-id", settings.TwitchClientID)
 	})
 
@@ -409,7 +409,7 @@ func TestUpdateSettings(t *testing.T) {
 		oldSettings := &storage.Settings{
 			ID:          "default",
 			Channels:    []string{"https://www.twitch.tv/old"},
-			LLMProvider: "lmstudio",
+			LLMProvider: "openrouter",
 		}
 
 		mockStore.On("GetSettings", mock.Anything).Return(oldSettings, nil)

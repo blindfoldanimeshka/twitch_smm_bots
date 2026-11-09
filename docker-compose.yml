@@ -55,10 +55,16 @@ services:
       - ENABLE_CONSOLE=false
       - DATABASE_URL=postgres://botfarm:botfarm@postgres:5432/botfarm?sslmode=disable
       - REDIS_URL=redis://redis:6379
-      - LLM_PROVIDER=${LLM_PROVIDER:-lmstudio}
-      - LLM_API_URL=${LLM_API_URL:-http://host.docker.internal:1234/v1}
-      - LLM_MODEL=${LLM_MODEL:-local-model}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      - LLM_API_URL=${LLM_API_URL:-https://openrouter.ai/api/v1}
+      - LLM_MODEL=${LLM_MODEL:-openrouter/free}
+      - LLM_PAID_MODEL=${LLM_PAID_MODEL:-z-ai/glm-5.3-flash}
+      - LLM_PAID_ENABLED=${LLM_PAID_ENABLED:-}
+      - LLM_PAID_DAILY_CAP_USD=${LLM_PAID_DAILY_CAP_USD:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
+      - OPENROUTER_REFERER=${OPENROUTER_REFERER:-http://localhost:3000}
+      - OPENROUTER_TITLE=${OPENROUTER_TITLE:-Twitch SMM Bot Farm}
       - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
       - AUDIO_STT_URL=${AUDIO_STT_URL:-http://stt:9000/v1/audio/transcriptions}
       - AUDIO_STT_MODEL=${AUDIO_STT_MODEL:-whisper-1}

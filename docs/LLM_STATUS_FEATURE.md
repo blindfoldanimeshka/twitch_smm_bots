@@ -12,13 +12,18 @@
 {
   "provider": "openrouter",
   "available": true,
-  "model": "meta-llama/llama-3.1-8b-instruct:free",
-  "url": "https://openrouter.ai/api/v1"
+  "generation_available": true,
+  "model": "openrouter/free",
+  "url": "https://openrouter.ai/api/v1",
+  "paid_enabled": true,
+  "paid_daily_cap_usd": 1.0,
+  "paid_spent_today_usd": 0.0,
+  "free_requests_remaining": 1000
 }
 ```
 
 ### 2. Файлы изменены:
-- `internal/llm/lmstudio.go` - добавлены методы `GetModel()` и `GetURL()`
+- `internal/llm/openrouter.go` - методы `Status()`, `GetModel()` и `GetURL()`
 - `internal/api/dto.go` - добавлен `LLMStatusDTO`
 - `internal/api/handlers.go` - добавлен handler `GetLLMStatus()`
 - `internal/api/server.go` - добавлен route `/api/llm/status`
@@ -68,10 +73,11 @@
 
 **Новые поля в Settings:**
 ```go
-LLMProvider      string    `json:"llm_provider"`      // lmstudio, openrouter, openai, omniroute, custom
-LLMApiURL        string    `json:"llm_api_url"`       // http://127.0.0.1:1234/v1
-LLMModel         string    `json:"llm_model"`         // meta-llama/llama-3.1-8b-instruct:free
-LLMApiKey        string    `json:"llm_api_key"`       // sk-...
+LLMProvider      string    `json:"llm_provider"`      // openrouter
+LLMApiURL        string    `json:"llm_api_url"`       // https://openrouter.ai/api/v1
+LLMModel         string    `json:"llm_model"`         // openrouter/free
+LLMPaidModel     string    `json:"llm_paid_model"`    // z-ai/glm-5.3-flash
+LLMApiKey        string    `json:"llm_api_key"`       // never returned by the API
 ```
 
 ### Frontend изменения
@@ -81,18 +87,17 @@ LLMApiKey        string    `json:"llm_api_key"`       // sk-...
 - `frontend/src/pages/Settings.tsx` - новая секция "Настройки LLM провайдера"
 
 **UI секция включает:**
-- Выбор провайдера (LM Studio, OpenRouter, OpenAI, Omniroute, Custom)
-- Автоматическая подстановка URL при выборе известного провайдера
-- Поля для API URL, модели и API ключа
-- Подсказки для каждого провайдера
+- Провайдер: OpenRouter (единственный поддерживаемый)
+- Поля: URL, бесплатная модель, платная модель, дневной лимит, API ключ
+- Ключ никогда не возвращается в UI; показывается источник (`env`, `database`, `none`)
 
 ### Применение настроек в runtime
 
 При сохранении настроек через UI:
 1. Настройки сохраняются в PostgreSQL
-2. `ApplySettings()` в botManager пересоздаёт LLM клиент
-3. Handler также обновляет свой LLM клиент
-4. Выполняется health check нового клиента
+2. `ApplySettings()` пересчитывает конфиг из env + БД и вызывает `llmClient.Reconfigure(cfg)`
+3. Один и тот же клиент продолжает работать, без замены указателя
+4. `/api/llm/status` сразу видит новые модели/лимиты
 5. StatusBar автоматически обновляется и показывает новый статус
 
 ### Миграция базы данных
@@ -112,8 +117,8 @@ docker-compose up --build
 
 1. Открыть Settings в UI
 2. Перейти в секцию "Настройки LLM провайдера"
-3. Выбрать провайдера (например, OpenRouter)
-4. Указать API ключ
-5. Указать модель (например, `meta-llama/llama-3.1-8b-instruct:free`)
+3. Выбрать OpenRouter (единственный вариант)
+4. Указать API ключ (`OPENROUTER_API_KEY` имеет приоритет над ключом из БД)
+5. Оставить бесплатную модель `openrouter/free` и платный fallback `z-ai/glm-5.3-flash`
 6. Нажать "Сохранить все настройки"
 7. StatusBar покажет обновлённый статус подключения

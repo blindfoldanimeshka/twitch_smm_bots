@@ -27,10 +27,13 @@ CREATE TABLE IF NOT EXISTS settings (
     audio_enabled BOOLEAN NOT NULL DEFAULT false,
     rotation_enabled BOOLEAN NOT NULL DEFAULT false,
     rotation_interval INTEGER NOT NULL DEFAULT 60,
-    llm_provider TEXT NOT NULL DEFAULT 'lmstudio',
-    llm_api_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:1234/v1',
-    llm_model TEXT NOT NULL DEFAULT '',
+    llm_provider TEXT NOT NULL DEFAULT 'openrouter',
+    llm_api_url TEXT NOT NULL DEFAULT 'https://openrouter.ai/api/v1',
+    llm_model TEXT NOT NULL DEFAULT 'openrouter/free',
     llm_api_key TEXT NOT NULL DEFAULT '',
+    llm_paid_model TEXT NOT NULL DEFAULT 'z-ai/glm-5.3-flash',
+    llm_paid_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    llm_paid_daily_cap_usd DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -42,7 +45,7 @@ VALUES (
     '{}',
     'Пиши короткие естественные сообщения, используй сленг, будь дружелюбным',
     'Не используй эмодзи, не оскорбляй, не спамь, не повторяйся',
-    'google/gemma-3-4b'
+    'openrouter/free'
 )
 ON CONFLICT (id) DO NOTHING;
 

@@ -23,7 +23,7 @@
          │
          ▼
 ┌─────────────────┐
-│   STT Server    │ ← Транскрибирует (faster-whisper)
+│   STT Server    │ ← Транскрибирует (whisper.cpp)
 │  (port 9000)    │
 └────────┬────────┘
          │
@@ -94,44 +94,54 @@ ffmpeg -hide_banner -loglevel error \
 
 ---
 
-### 3. **Транскрипция** (STT Server)
+### 3. **Транскрипция** (whisper.cpp)
 
 **Что происходит:**
-- Audio Service отправляет WAV чанк на STT сервер
-- STT сервер использует `faster-whisper` для распознавания речи
+- Audio Service отправляет WAV-чанк на STT-сервер
+- Официальный контейнер `ghcr.io/ggml-org/whisper.cpp:main` запускает `whisper-server`
+- Используется локальная модель `models/ggml-small-q5_1.bin`, смонтированная в `/models`
 
 **HTTP запрос:**
 ```http
 POST http://stt:9000/v1/audio/transcriptions
 Content-Type: multipart/form-data
 
-file: audio.wav (binary)
+file: chunk.wav (binary)
 model: whisper-1
 language: ru
+response_format: json
 ```
 
-**STT Server (Python FastAPI):**
-```python
-# app.py
-model = WhisperModel("small", device="cpu", compute_type="int8")
+`model` остаётся для OpenAI-совместимой формы запроса; `whisper-server` его игнорирует.
+`response_format=json` заставляет сервер вернуть `{"text": "..."}`.
 
-segments, _info = model.transcribe(
-    audio_file,
-    language="ru",
-    vad_filter=True,    # Фильтр голосовой активности
-    beam_size=1         # Быстрая транскрипция
-)
-
-text = " ".join(seg.text.strip() for seg in segments)
-return {"text": text}
+**Контейнер:**
+```yaml
+stt:
+  image: ghcr.io/ggml-org/whisper.cpp:main
+  entrypoint: ["whisper-server"]
+  command:
+    - --host
+    - 0.0.0.0
+    - --port
+    - "9000"
+    - -m
+    - /models/ggml-small-q5_1.bin
+    - -t
+    - "4"
+    - -l
+    - ru
+    - --inference-path
+    - /v1/audio/transcriptions
+  volumes:
+    - ./models:/models:ro
 ```
 
-**Модели Whisper:**
-- `tiny` — самая быстрая, низкое качество
-- `base` — быстрая, приемлемое качество
-- `small` — **рекомендуется** (баланс скорости/качества)
-- `medium` — медленнее, лучше качество
-- `large` — самая точная, очень медленная
+**Модель:**
+- файл: `models/ggml-small-q5_1.bin` (multilingual `small`, q5_1);
+- в репозиторий не коммитится (`models/` в `.gitignore`);
+- путь внутри контейнера задаётся через `STT_MODEL_FILE`;
+- язык по умолчанию — `STT_LANGUAGE=ru`, но поле `language` из запроса имеет приоритет.
 
 **Результат:**
 ```json
@@ -223,41 +233,33 @@ AUDIO_FFMPEG_CMD=ffmpeg
 
 ---
 
-## 🔧 Настройки STT модели
+## 🔧 Настройки STT
 
 ```env
-# В docker-compose.yml для stt сервиса:
-STT_MODEL_NAME=small                  # tiny, base, small, medium, large
-STT_DEVICE=cpu                        # cpu или cuda
-STT_COMPUTE_TYPE=int8                 # int8, float16, float32
+# Путь к модели внутри /models (файл лежит в ./models на хосте)
+STT_MODEL_FILE=ggml-small-q5_1.bin
+# Количество потоков CPU
+STT_THREADS=4
+# Язык по умолчанию; language из запроса имеет приоритет
+STT_LANGUAGE=ru
 ```
 
-**Рекомендации:**
-- **CPU**: `small` + `int8` — лучший баланс
-- **GPU (CUDA)**: `medium` + `float16` — быстрее и точнее
-- **Слабое железо**: `tiny` + `int8` — минимальные требования
+Модель `ggml-small-q5_1.bin` — multilingual Whisper `small` в квантовании q5_1.
+Это компромисс между качеством и скоростью на CPU. Для более высокой точности можно
+положить другую GGML-модель в `models/` и указать её имя в `STT_MODEL_FILE`.
 
 ---
 
 ## 📈 Производительность
 
-### Время обработки (на CPU):
-
-| Модель | Чанк 8 сек | Память | Качество |
-|--------|-----------|--------|----------|
-| tiny   | ~1-2 сек  | 1 GB   | ⭐⭐     |
-| base   | ~2-3 сек  | 1 GB   | ⭐⭐⭐   |
-| small  | ~3-5 сек  | 2 GB   | ⭐⭐⭐⭐ |
-| medium | ~8-12 сек | 5 GB   | ⭐⭐⭐⭐⭐ |
-| large  | ~20+ сек  | 10 GB  | ⭐⭐⭐⭐⭐ |
-
-### Цикл работы:
+Время зависит от CPU и длины чанка. На типичном CPU `small` обрабатывает 8-секундный
+чанк за несколько секунд; при четырех потоках цикл укладывается в интервал опроса.
 
 ```
-Захват (8 сек) → Транскрипция (3-5 сек) → Ожидание (15 сек) → Повтор
+Захват (8 сек) → Транскрипция (несколько сек) → Ожидание (15 сек) → Повтор
 ```
 
-**Итого:** Новый контекст каждые ~15 секунд
+**Итого:** новый контекст примерно каждые 15 секунд.
 
 ---
 
@@ -267,18 +269,19 @@ STT_COMPUTE_TYPE=int8                 # int8, float16, float32
 
 **Проверка 1: STT сервер запущен**
 ```bash
+docker compose --profile audio ps stt
 curl http://localhost:9000/health
-# Должен вернуть: {"status":"ok","model":"small",...}
+# Должен вернуть: {"status":"ok"}
 ```
 
 **Проверка 2: Streamlink установлен**
 ```bash
-docker exec twitch-bot-backend streamlink --version
+docker exec twitch-smm-backend streamlink --version
 ```
 
 **Проверка 3: FFmpeg установлен**
 ```bash
-docker exec twitch-bot-backend ffmpeg -version
+docker exec twitch-smm-backend ffmpeg -version
 ```
 
 **Проверка 4: Логи**
@@ -306,8 +309,8 @@ docker compose logs stt
 - Большая модель (`medium`, `large`)
 
 **Решение:**
-- Используйте `small` или `tiny` модель
-- Включите GPU: `STT_DEVICE=cuda` (требует NVIDIA GPU)
+- Используйте модель меньше (`base`/`tiny`) через `STT_MODEL_FILE`
+- Увеличьте `STT_THREADS` под количество ядер CPU
 - Уменьшите `AUDIO_CHUNK_SEC` до 5-6 секунд
 
 ### Высокое использование памяти
@@ -344,10 +347,7 @@ curl http://localhost:9000/health | jq
 
 ```json
 {
-  "status": "ok",
-  "model": "small",
-  "device": "cpu",
-  "model_loaded": true
+  "status": "ok"
 }
 ```
 
@@ -357,22 +357,22 @@ curl http://localhost:9000/health | jq
 
 ### Для быстрой транскрипции:
 ```env
-STT_MODEL_NAME=small
-STT_COMPUTE_TYPE=int8
+STT_MODEL_FILE=ggml-base-q5_1.bin
+STT_THREADS=4
 AUDIO_CHUNK_SEC=6
 ```
 
 ### Для высокого качества:
 ```env
-STT_MODEL_NAME=medium
-STT_DEVICE=cuda
-STT_COMPUTE_TYPE=float16
+STT_MODEL_FILE=ggml-small-q5_1.bin
+STT_THREADS=6
 AUDIO_CHUNK_SEC=10
 ```
 
 ### Для экономии ресурсов:
 ```env
-STT_MODEL_NAME=tiny
+STT_MODEL_FILE=ggml-tiny-q5_1.bin
+STT_THREADS=2
 AUDIO_CHUNK_SEC=5
 AUDIO_POLL_SEC=30
 ```
@@ -381,9 +381,9 @@ AUDIO_POLL_SEC=30
 
 ## 📝 Примечания
 
-1. **Lazy loading модели**: Модель Whisper загружается при первом запросе, не при старте сервера
-2. **VAD фильтр**: Автоматически отсекает тишину и шум
-3. **Beam size = 1**: Быстрая транскрипция без перебора вариантов
+1. **Загрузка модели**: `whisper-server` загружает модель при старте контейнера; healthcheck имеет `start_period: 60s`
+2. **Формат ответа**: `response_format=json` возвращает `{"text": "..."}`
+3. **Тишина**: Whisper может галлюцинировать на полной тишине; пустой `text` не считается ошибкой
 4. **Дедупликация**: Одинаковые тексты подряд игнорируются
 5. **Контекст**: Хранится только последние 2 минуты (120 сек)
 

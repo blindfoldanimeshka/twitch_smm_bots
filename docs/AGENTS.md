@@ -4,9 +4,10 @@
 TwitchSMM is a Twitch bot management system with a Go backend and React frontend.
 
 ## Tech Stack
-- **Backend**: Go 1.23+, PostgreSQL, Docker
-- **Frontend**: React 18, TypeScript, Vite
-- **LLM Integration**: LM Studio API for local AI responses
+- **Backend**: Go 1.26+, PostgreSQL, Redis, Docker
+- **Frontend**: React 19, TypeScript, Vite
+- **LLM Integration**: OpenRouter API (free-first with paid fallback)
+- **STT**: whisper.cpp sidecar with a local GGML model
 
 ## Project Structure
 ```
@@ -14,9 +15,10 @@ twitchSmm/
 ├── frontend/          # React frontend
 ├── internal/          # Go backend code
 │   ├── api/          # HTTP handlers
-│   ├── bot/          # Twitch bot logic
-│   ├── llm/          # LLM integration
+│   ├── llm/          # OpenRouter client and config resolution
+│   ├── audio/        # stream capture and whisper.cpp transcription
 │   └── storage/      # Database layer
+├── models/           # local whisper.cpp models (gitignored)
 ├── db/               # Database migrations
 └── docker-compose.yml
 ```
@@ -30,8 +32,7 @@ twitchSmm/
 - Follow Go and TypeScript best practices
 
 ### Git Workflow
-- Work on `dev` branch for development
-- Merge to `main` only for releases
+- Work on `main`
 - Write clear commit messages
 
 ### Testing
@@ -41,13 +42,14 @@ twitchSmm/
 
 ## Key Features
 1. Multi-bot management
-2. LLM-powered responses via LM Studio
+2. LLM-powered responses via OpenRouter (free-first, paid fallback)
 3. Real-time chat monitoring
 4. Settings management
 5. Statistics dashboard
 
 ## Important Notes
-- LM Studio must be running on localhost:1234 for LLM features
+- `OPENROUTER_API_KEY` is optional at startup; without it the API reports LLM unavailable
+- Local STT needs `models/ggml-small-q5_1.bin` before `docker compose --profile audio up -d`
 - PostgreSQL runs in Docker container
 - Frontend dev server: http://localhost:5173
 - Backend API: http://localhost:8080

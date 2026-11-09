@@ -34,14 +34,16 @@ docker compose up -d --build --wait
 
 ## LLM
 
-По умолчанию используется LM Studio на вашем компьютере:
+Используется OpenRouter:
 
-- запустите LM Studio → Local Server на порту `1234`;
-- из контейнера адрес — `http://host.docker.internal:1234/v1`.
+- бесплатная модель `openrouter/free` — первая попытка;
+- платный fallback `z-ai/glm-5.3-flash` — только если бесплатная недоступна;
+- дневной лимит платных расходов по умолчанию — `$1`, меняется в UI (**Settings → LLM**);
+- ключ задаётся через `OPENROUTER_API_KEY` в `.env` или в UI. Ключ из окружения имеет приоритет.
 
-Провайдер, URL, модель и ключ можно поменять в UI (**Settings → LLM**) — подойдёт любой OpenAI-совместимый API.
+Без ключа backend и UI запускаются, но боты не смогут генерировать сообщения. `/api/llm/status` покажет причину.
 
-Если LLM недоступен, backend и UI всё равно запускаются, но боты не смогут генерировать сообщения.
+OpenRouter ограничивает бесплатный тариф 20 запросами в минуту. Всплески выше лимита могут уходить в платный fallback, но дневной лимит ограничивает расход.
 
 ## Сервисы
 
@@ -71,8 +73,9 @@ Windows: `stop.cmd`.
 Они не собираются при обычном запуске.
 
 ```bash
-# Локальная транскрипция аудио стрима (faster-whisper, тяжёлый образ)
-docker compose --profile audio up -d --build
+# Локальная транскрипция аудио стрима (whisper.cpp)
+# Перед запуском положите модель в models/ggml-small-q5_1.bin
+docker compose --profile audio up -d
 
 # pgAdmin: http://localhost:5050 (admin@local.dev / admin)
 docker compose --profile tools up -d
@@ -107,10 +110,10 @@ frontend/      React + TypeScript + Vite (nginx в проде)
 logic.go       точка входа backend: менеджер ботов, планировщик, консоль
 internal/api   REST API, WebSocket, middleware
 internal/twitch IRC-клиент Twitch
-internal/llm   OpenAI-совместимый LLM-клиент
-internal/audio streamlink + ffmpeg + STT
+internal/llm   клиент OpenRouter (free-first + paid fallback)
+internal/audio streamlink + ffmpeg + whisper.cpp
 internal/storage PostgreSQL, схема создаётся автоматически при старте
-stt_server/    FastAPI + faster-whisper (опциональный профиль audio)
+models/        локальная модель whisper.cpp (не коммитится)
 ```
 
 Схема БД создаётся и обновляется самим приложением при старте (`EnsureSchema` / `EnsureSettingsTable`), поэтому init-скрипты в `db/` для запуска не нужны.
@@ -123,4 +126,4 @@ stt_server/    FastAPI + faster-whisper (опциональный профиль
 
 **UI открывается, но запросы к API падают.** Убедитесь, что `API_KEY` в `.env` совпадает с ключом, с которым собран frontend: после изменения выполните `docker compose up -d --build`.
 
-**Сбросить всё.** `docker compose down -v` — удалит базу, redis и кэш моделей.
+**Сбросить всё.** `docker compose down -v` — удалит базу и Redis.

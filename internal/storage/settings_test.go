@@ -29,8 +29,8 @@ func TestGetSettings(t *testing.T) {
 			AudioEnabled:     true,
 			RotationEnabled:  false,
 			RotationInterval: 60,
-			LLMProvider:      "lmstudio",
-			LLMApiURL:        "http://localhost:1234/v1",
+			LLMProvider:      "openrouter",
+			LLMApiURL:        "https://openrouter.ai/api/v1",
 			LLMModel:         "test-model",
 			LLMApiKey:        "",
 			TwitchClientID:     "test-client-id",
@@ -69,7 +69,7 @@ func TestGetSettings(t *testing.T) {
 		// Note: This is a structure test. Full integration test would use testcontainers
 		assert.NotNil(t, expectedSettings)
 		assert.Equal(t, "default", expectedSettings.ID)
-		assert.Equal(t, "lmstudio", expectedSettings.LLMProvider)
+		assert.Equal(t, "openrouter", expectedSettings.LLMProvider)
 		assert.Equal(t, "test-client-id", expectedSettings.TwitchClientID)
 	})
 
@@ -118,8 +118,8 @@ func TestSettingsValidation(t *testing.T) {
 			ID:          "default",
 			Channels:    []string{},
 			MaxTokens:   60,
-			LLMProvider: "lmstudio",
-			LLMApiURL:   "http://localhost:1234/v1",
+			LLMProvider: "openrouter",
+			LLMApiURL:   "https://openrouter.ai/api/v1",
 		}
 
 		assert.NotEmpty(t, settings.ID)

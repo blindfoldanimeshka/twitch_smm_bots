@@ -306,7 +306,7 @@ Twitch SMM Bot - это система управления множествен
                          │
                     ┌────▼───────┐
                     │  LLM API  │
-                    │ (lmstudio)│
+                    │(openrouter)│
                     └───────────┘
                          │
                     ┌────▼───────┐
@@ -343,9 +343,11 @@ REDIS_URL=redis://...
 API_KEY=...
 API_PORT=8080
 TWITCH_CHANNEL=...
-LLM_API_URL=http://127.0.0.1:1234/v1
-LLM_MODEL=local-model
-LLM_PROVIDER=lmstudio
+LLM_API_URL=https://openrouter.ai/api/v1
+LLM_MODEL=openrouter/free
+LLM_PAID_MODEL=z-ai/glm-5.3-flash
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
 AUDIO_ENABLED=false
 AUDIO_STT_URL=http://127.0.0.1:9000/v1
 ```
