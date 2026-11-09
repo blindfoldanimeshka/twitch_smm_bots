@@ -329,10 +329,10 @@ export default function Settings() {
     setSaveBlocked(null)
     setSaveSuccess(false)
     setSaveError(null)
-    const channels = formState.channels.map((c) => c.trim()).filter((c) => c !== '')
+    const sentChannels = formState.channels.map((c) => c.trim()).filter((c) => c !== '')
     const payload: SettingsType = {
       ...formState,
-      channels,
+      channels: sentChannels,
       // Final clamp: a half-typed value that never got blurred still must
       // not reach the backend outside 20..200.
       max_tokens: clampMaxTokensValue(formState.max_tokens),
@@ -340,7 +340,10 @@ export default function Settings() {
     }
     // The form must show exactly what was sent: onSuccess then only rebases
     // the baseline, and anything typed after this click stays untouched.
-    setFormState(payload)
+    // An empty channel list keeps the display shape — one blank row, the very
+    // fallback normalizeSettings uses for the baseline — so saving zero
+    // channels clears `dirty` instead of staying dirty as [] vs [''].
+    setFormState({ ...payload, channels: sentChannels.length > 0 ? sentChannels : [''] })
     updateSettingsMutation.mutate(payload)
   }
 
