@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { config } from '../config'
 
 interface AudioTestModalProps {
   isOpen: boolean
@@ -22,7 +23,7 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
       return
     }
 
-    const ws = new WebSocket(`ws://localhost:8080/api/ws?api_key=secret-api-key-12345`)
+    const ws = new WebSocket(`${config.wsUrl}/api/ws?api_key=${config.apiKey}`)
 
     ws.onopen = () => {
       setStatus('connected')
@@ -34,8 +35,8 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
         if (msg.type === 'audio_context' && msg.payload?.context) {
           setTranscription(prev => [...prev, msg.payload.context])
         }
-      } catch (e) {
-        console.error('WebSocket message parse error:', e)
+      } catch {
+        // Malformed payload: drop silently (never log message contents).
       }
     }
 
@@ -56,11 +57,11 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
     setTestingLLM(true)
     setLlmResult('')
     try {
-      const response = await fetch('http://localhost:8080/api/settings/test-llm', {
+      const response = await fetch(`${config.apiUrl}/api/settings/test-llm`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': 'secret-api-key-12345'
+          'X-API-Key': config.apiKey
         },
         body: JSON.stringify({ personality: 'нейтрал' })
       })
@@ -70,7 +71,7 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
       } else {
         setLlmResult('Ошибка генерации')
       }
-    } catch (error) {
+    } catch {
       setLlmResult('Ошибка подключения к API')
     } finally {
       setTestingLLM(false)
