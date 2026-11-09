@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Mic, Plus, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api/client'
@@ -45,6 +45,77 @@ function pairFieldError(min: number, max: number): string | undefined {
   if (min > max) return 'минимум ≤ максимум'
   if (max > 240) return 'до 240 минут'
   return undefined
+}
+
+/**
+ * Server settings → local form shape. Every sync from the cache and every
+ * baseline update goes through here, so formState and baseline always share
+ * one normalized shape and can be compared field by field.
+ */
+function normalizeSettings(settings: SettingsType): SettingsType {
+  return {
+    ...settings,
+    channels: settings.channels.length > 0 ? settings.channels : [''],
+    debug_mode: settings.debug_mode ?? false,
+    debug_channel: settings.debug_channel ?? '',
+    positive_prompt: settings.positive_prompt ?? '',
+    negative_prompt: settings.negative_prompt ?? '',
+    max_tokens: settings.max_tokens ?? 60,
+    audio_enabled: settings.audio_enabled ?? false,
+    // Rotation has no UI any more: keep the stored values and send them
+    // back unchanged (UpdateSettings replaces the whole row).
+    rotation_enabled: settings.rotation_enabled ?? false,
+    rotation_interval: settings.rotation_interval ?? 60,
+    llm_provider: settings.llm_provider ?? 'openrouter',
+    llm_api_url: settings.llm_api_url ?? 'https://openrouter.ai/api/v1',
+    llm_model: settings.llm_model ?? 'openrouter/free',
+    llm_paid_model: settings.llm_paid_model ?? 'z-ai/glm-5.3-flash',
+    llm_paid_enabled: settings.llm_paid_enabled ?? true,
+    llm_paid_daily_cap_usd: settings.llm_paid_daily_cap_usd ?? 1,
+    llm_paid_enabled_effective: settings.llm_paid_enabled_effective ?? settings.llm_paid_enabled ?? true,
+    llm_paid_daily_cap_usd_effective: settings.llm_paid_daily_cap_usd_effective ?? settings.llm_paid_daily_cap_usd ?? 1,
+    llm_api_key: '',
+    llm_api_key_set: settings.llm_api_key_set ?? false,
+    llm_api_key_source: settings.llm_api_key_source ?? 'none',
+    twitch_client_id: settings.twitch_client_id ?? '',
+    twitch_client_secret: settings.twitch_client_secret ?? '',
+    twitch_client_secret_set: settings.twitch_client_secret_set ?? false,
+    presence_enabled: settings.presence_enabled ?? true,
+    presence_session_min_minutes: settings.presence_session_min_minutes ?? 20,
+    presence_session_max_minutes: settings.presence_session_max_minutes ?? 40,
+    presence_cooldown_min_minutes: settings.presence_cooldown_min_minutes ?? 10,
+    presence_cooldown_max_minutes: settings.presence_cooldown_max_minutes ?? 20,
+    presence_greeting_enabled: settings.presence_greeting_enabled ?? true,
+    presence_farewell_enabled: settings.presence_farewell_enabled ?? true,
+    updated_at: settings.updated_at ?? '',
+  }
+}
+
+/**
+ * Deep compare of the form against the last synced/saved baseline.
+ * `updated_at` (the server stamps a new one on every save) and `llm_api_key`
+ * (never echoed back by the server) are deliberately excluded.
+ */
+function settingsFormEqual(a: SettingsType, b: SettingsType): boolean {
+  for (const key of Object.keys(a) as (keyof SettingsType)[]) {
+    if (key === 'updated_at' || key === 'llm_api_key') continue
+    const av = a[key]
+    const bv = b[key]
+    if (Array.isArray(av) && Array.isArray(bv)) {
+      if (av.length !== bv.length || av.some((v, i) => v !== bv[i])) return false
+    } else if (av !== bv) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Clamp a typed token limit into the backend-accepted 20..200 range. */
+function clampMaxTokens(raw: string): number | null {
+  if (raw.trim() === '') return null // empty input: keep the previous value, never send 0
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return null
+  return Math.min(200, Math.max(20, Math.round(parsed)))
 }
 
 function SwitchField({
@@ -136,50 +207,40 @@ export default function Settings() {
     queryFn: async () => (await api.getLLMStatus()).data,
   })
 
+  // Baseline = the settings the server last returned (or that we last saved).
+  // While the form differs from it (`dirty`), server data is never applied on
+  // top of the user's unsaved edits — the Topbar polls ['settings'] every 30s.
+  const [baseline, setBaseline] = useState<SettingsType | null>(null)
+  const dirty = useMemo(
+    () => (baseline ? !settingsFormEqual(formState, baseline) : false),
+    [formState, baseline],
+  )
+
+  // Read through a ref so this effect re-runs only on genuinely new server
+  // data, not when `dirty` flips (a dirty→false transition must not replay a
+  // stale cache object over the form we just saved).
+  const dirtyRef = useRef(false)
   useEffect(() => {
-    if (!settings) return
-    setFormState({
-      ...settings,
-      channels: settings.channels.length > 0 ? settings.channels : [''],
-      debug_mode: settings.debug_mode ?? false,
-      debug_channel: settings.debug_channel ?? '',
-      positive_prompt: settings.positive_prompt ?? '',
-      negative_prompt: settings.negative_prompt ?? '',
-      max_tokens: settings.max_tokens ?? 60,
-      audio_enabled: settings.audio_enabled ?? false,
-      // Rotation has no UI any more: keep the stored values and send them
-      // back unchanged (UpdateSettings replaces the whole row).
-      rotation_enabled: settings.rotation_enabled ?? false,
-      rotation_interval: settings.rotation_interval ?? 60,
-      llm_provider: settings.llm_provider ?? 'openrouter',
-      llm_api_url: settings.llm_api_url ?? 'https://openrouter.ai/api/v1',
-      llm_model: settings.llm_model ?? 'openrouter/free',
-      llm_paid_model: settings.llm_paid_model ?? 'z-ai/glm-5.3-flash',
-      llm_paid_enabled: settings.llm_paid_enabled ?? true,
-      llm_paid_daily_cap_usd: settings.llm_paid_daily_cap_usd ?? 1,
-      llm_paid_enabled_effective: settings.llm_paid_enabled_effective ?? settings.llm_paid_enabled ?? true,
-      llm_paid_daily_cap_usd_effective: settings.llm_paid_daily_cap_usd_effective ?? settings.llm_paid_daily_cap_usd ?? 1,
-      llm_api_key: '',
-      llm_api_key_set: settings.llm_api_key_set ?? false,
-      llm_api_key_source: settings.llm_api_key_source ?? 'none',
-      twitch_client_id: settings.twitch_client_id ?? '',
-      twitch_client_secret: settings.twitch_client_secret ?? '',
-      twitch_client_secret_set: settings.twitch_client_secret_set ?? false,
-      presence_enabled: settings.presence_enabled ?? true,
-      presence_session_min_minutes: settings.presence_session_min_minutes ?? 20,
-      presence_session_max_minutes: settings.presence_session_max_minutes ?? 40,
-      presence_cooldown_min_minutes: settings.presence_cooldown_min_minutes ?? 10,
-      presence_cooldown_max_minutes: settings.presence_cooldown_max_minutes ?? 20,
-      presence_greeting_enabled: settings.presence_greeting_enabled ?? true,
-      presence_farewell_enabled: settings.presence_farewell_enabled ?? true,
-      updated_at: settings.updated_at ?? '',
-    })
+    dirtyRef.current = dirty
+  }, [dirty])
+
+  useEffect(() => {
+    if (!settings || dirtyRef.current) return
+    const normalized = normalizeSettings(settings)
+    setFormState(normalized)
+    setBaseline(normalized)
   }, [settings])
 
   const updateSettingsMutation = useMutation({
     mutationFn: (data: SettingsType) => api.updateSettings(data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      // What we just saved is now the server truth: rebase the baseline onto
+      // it and align the channel inputs (trim/drop empties) so `dirty`
+      // clears and background sync works again.
+      const normalized = normalizeSettings(variables)
+      setBaseline(normalized)
+      setFormState((prev) => ({ ...prev, channels: normalized.channels }))
       setSaveError(null)
       setSaveSuccess(true)
       window.setTimeout(() => setSaveSuccess(false), 4000)
@@ -563,7 +624,10 @@ export default function Settings() {
               min={20}
               max={200}
               value={formState.max_tokens}
-              onChange={(e) => update('max_tokens', Number(e.target.value))}
+              onChange={(e) => {
+                const next = clampMaxTokens(e.target.value)
+                if (next !== null) update('max_tokens', next)
+              }}
             />
           </div>
         </Card>
@@ -636,6 +700,12 @@ export default function Settings() {
 
         {/* ── Save ─────────────────────────────────────────────────── */}
         <div style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>
+          {dirty && (
+            <Alert variant="info">
+              Есть несохранённые изменения. Фоновые обновления настроек не перезаписывают их,
+              пока вы не сохраните форму.
+            </Alert>
+          )}
           {saveBlocked && presenceError && <Alert variant="error">{saveBlocked}</Alert>}
           {saveSuccess && <Alert variant="success">Настройки сохранены.</Alert>}
           {saveError && <Alert variant="error">{saveError}</Alert>}
@@ -653,7 +723,7 @@ export default function Settings() {
       <AudioTestModal
         isOpen={audioModalOpen}
         onClose={() => setAudioModalOpen(false)}
-        channel={formState.debug_channel}
+        channel={formState.channels.map((c) => c.trim()).find(Boolean) ?? ''}
       />
     </>
   )
