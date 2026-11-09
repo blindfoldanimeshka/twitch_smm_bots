@@ -1322,6 +1322,33 @@ func TestUpdateBotRejectsInvalidConfig(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	})
 
+	t.Run("unchanged invalid personality stays editable", func(t *testing.T) {
+		// Фронтенд всегда шлёт personality в payload правки. Непустое имя и
+		// то же самое (невалидное) значение личности не должны блокировать
+		// переименование legacy-строки.
+		legacy := &BotInfo{Config: storage.BotConfig{
+			ID: "bot1", Name: "Old Bot", Personality: "",
+			MinDelaySec: 5, MaxDelaySec: 15, RateLimitPerMin: 10,
+		}}
+
+		mockManager := new(MockBotManager)
+		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+		mockManager.On("GetBot", "bot1").Return(legacy, nil)
+		mockManager.On("UpdateBot", mock.Anything, "bot1", mock.Anything).Return(nil)
+
+		body, err := json.Marshal(map[string]interface{}{"name": "Renamed Bot", "personality": ""})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/bots/bot1", bytes.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "bot1"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateBot(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		mockManager.AssertCalled(t, "UpdateBot", mock.Anything, "bot1", mock.Anything)
+	})
+
 	t.Run("unknown bot returns 404", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)

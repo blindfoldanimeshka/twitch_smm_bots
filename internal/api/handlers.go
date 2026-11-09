@@ -348,14 +348,16 @@ func (h *Handler) UpdateBot(w http.ResponseWriter, r *http.Request) {
 // validateBotUpdate checks the configuration that results from applying the
 // request on top of the stored bot config. The delay pair is validated against
 // the stored counterpart, because a single-field update can still break the
-// max >= min invariant. Name and personality are checked only when the client
-// sends them: rows created before this validation must stay editable.
+// max >= min invariant. Name and personality are checked only when they
+// actually change: the edit payload echoes the stored values, so a legacy row
+// with an empty name or unknown personality stays editable while a genuinely
+// new value is still validated.
 func validateBotUpdate(current storage.BotConfig, req UpdateBotRequest) error {
-	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+	if req.Name != nil && *req.Name != current.Name && strings.TrimSpace(*req.Name) == "" {
 		return errors.New("name must not be empty")
 	}
 
-	if req.Personality != nil {
+	if req.Personality != nil && *req.Personality != current.Personality {
 		if err := ValidatePersonality(*req.Personality); err != nil {
 			return fmt.Errorf("personality: %w", err)
 		}

@@ -25,6 +25,16 @@ export interface TouchedFields {
   [key: string]: boolean
 }
 
+// Selectable personality values, mirroring PERSONALITY_OPTIONS in
+// components/BotForm.tsx (which imports these types, so it cannot be imported
+// back without a cycle). Used only to detect legacy stored values.
+const SELECTABLE_PERSONALITIES: readonly string[] = [
+  'веселый_фанат',
+  'токсик',
+  'нейтрал',
+  'хайпер',
+]
+
 const buildFormData = (editingBot?: any): BotFormData => {
   if (!editingBot) {
     return initialFormData
@@ -35,7 +45,12 @@ const buildFormData = (editingBot?: any): BotFormData => {
     twitch_login: editingBot.twitch_login,
     password: '',
     name: editingBot.name,
-    personality: editingBot.personality,
+    // A row predating personality validation can hold an empty or unknown
+    // value. The select renders the stored value, so state must match one of
+    // the options or the visible and sent personalities would diverge.
+    personality: SELECTABLE_PERSONALITIES.includes(editingBot.personality)
+      ? editingBot.personality
+      : initialFormData.personality,
     min_delay_sec: editingBot.min_delay_sec,
     max_delay_sec: editingBot.max_delay_sec,
     rate_limit_per_min: editingBot.rate_limit_per_min,
