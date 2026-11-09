@@ -1,239 +1,180 @@
-import React, { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
-import { BotFormModal } from '../components/BotFormModal'
-import { BotForm } from '../components/BotForm'
-import { BotLogPanel } from '../components/BotLogPanel'
-import { TiltCard } from '../components/ui/tilt-card'
-import InteractiveHoverButton from '../components/ui/interactive-hover-button'
-import { useBotForm } from '../hooks/useBotForm'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { UserPlus } from 'lucide-react'
+import { api, getErrorMessage } from '../api/client'
+import type { Bot } from '../api/client'
+import { PageHeader } from '../components/layout/PageHeader'
+import { BotsTable, type BotTableAction } from '../components/BotsTable'
+import { BotModal } from '../components/BotModal'
+import { BotLogsDrawer } from '../components/BotLogsDrawer'
+import { Alert } from '../components/ui/Alert'
+import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import { Modal } from '../components/ui/Modal'
 import type { BotFormData } from '../hooks/useBotForm'
 
 export default function Bots() {
   const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
-  const [editingBot, setEditingBot] = useState<any | null>(null)
-  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
 
-  const botForm = useBotForm(editingBot)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingBot, setEditingBot] = useState<Bot | null>(null)
+  const [deletingBot, setDeletingBot] = useState<Bot | null>(null)
+  const [logsBot, setLogsBot] = useState<Bot | null>(null)
+  const [pending, setPending] = useState<{ id: string; action: BotTableAction } | null>(null)
 
   const { data: bots = [] } = useQuery({
     queryKey: ['bots'],
-    queryFn: async () => {
-      const res = await api.getBots()
-      return res.data
-    },
+    queryFn: async () => (await api.getBots()).data,
   })
 
-  const createBotMutation = useMutation({
-    mutationFn: async (data: BotFormData) => {
-      console.log('🚀 [CREATE BOT] Отправка запроса:', data)
-      try {
-        const response = await api.createBot(data)
-        console.log('✅ [CREATE BOT] Успешный ответ:', response)
-        return response
-      } catch (error: any) {
-        console.error('❌ [CREATE BOT] Ошибка:', error)
-        console.error('❌ [CREATE BOT] Детали ошибки:', {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status,
-        })
-        throw error
-      }
-    },
-    onSuccess: (data) => {
-      console.log('✅ [CREATE BOT] onSuccess вызван, данные:', data)
-      queryClient.invalidateQueries({ queryKey: ['bots'] })
-      resetForm()
-    },
-    onError: (error: any) => {
-      console.error('❌ [CREATE BOT] onError вызван:', error)
-      alert(`Ошибка создания бота: ${error.response?.data?.error || error.message}`)
-    },
-  })
+  const invalidateAfterAction = () => {
+    queryClient.invalidateQueries({ queryKey: ['bots'] })
+    queryClient.invalidateQueries({ queryKey: ['stats'] })
+  }
 
-  const updateBotMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<BotFormData> }) =>
-      api.updateBot(id, data),
+  const closeModal = () => {
+    setModalOpen(false)
+    setEditingBot(null)
+    createBot.reset()
+    updateBot.reset()
+  }
+
+  const createBot = useMutation({
+    mutationFn: (data: BotFormData) => api.createBot(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bots'] })
-      resetForm()
-    },
-    onError: (error: any) => {
-      alert(`Ошибка обновления бота: ${error.response?.data?.error || error.message}`)
+      invalidateAfterAction()
+      closeModal()
     },
   })
 
-  const deleteBotMutation = useMutation({
+  const updateBot = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: BotFormData }) => {
+      const { password, ...fields } = data
+      // An empty OAuth token on edit means "keep the current one": omit it.
+      const payload = (password ? { ...fields, password } : fields) as Partial<Bot>
+      return api.updateBot(id, payload)
+    },
+    onSuccess: () => {
+      invalidateAfterAction()
+      closeModal()
+    },
+  })
+
+  const deleteBot = useMutation({
     mutationFn: (id: string) => api.deleteBot(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bots'] })
-    },
-    onError: (error: any) => {
-      alert(`Ошибка удаления бота: ${error.response?.data?.error || error.message}`)
+      invalidateAfterAction()
+      setDeletingBot(null)
     },
   })
 
-  const resetForm = () => {
-    botForm.reset()
-    setShowForm(false)
-    setEditingBot(null)
-  }
+  const startBot = useMutation({
+    mutationFn: (bot: Bot) => api.startBot(bot.id),
+    onMutate: (bot) => setPending({ id: bot.id, action: 'start' }),
+    onSettled: () => setPending(null),
+    onSuccess: invalidateAfterAction,
+  })
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    console.log('📝 [FORM SUBMIT] Форма отправлена')
-    console.log('📝 [FORM SUBMIT] Данные формы:', botForm.formData)
-    console.log('📝 [FORM SUBMIT] Режим редактирования:', editingBot ? 'Да' : 'Нет')
+  const stopBot = useMutation({
+    mutationFn: (bot: Bot) => api.stopBot(bot.id),
+    onMutate: (bot) => setPending({ id: bot.id, action: 'stop' }),
+    onSettled: () => setPending(null),
+    onSuccess: invalidateAfterAction,
+  })
 
+  const actionError = deleteBot.error ?? startBot.error ?? stopBot.error
+  const modalError = createBot.error ?? updateBot.error
+
+  const handleSubmit = (data: BotFormData) => {
     if (editingBot) {
-      console.log('✏️ [UPDATE BOT] Обновление бота:', editingBot.id)
-      updateBotMutation.mutate({ id: editingBot.id, data: botForm.formData })
+      updateBot.mutate({ id: editingBot.id, data })
     } else {
-      console.log('➕ [CREATE BOT] Создание нового бота')
-      createBotMutation.mutate(botForm.formData)
+      createBot.mutate(data)
     }
   }
 
-  const handleEdit = (bot: any) => {
-    setEditingBot(bot)
-    setShowForm(true)
-  }
-
-  const handleDelete = (id: string) => {
-    if (confirm(`Удалить бота ${id}? Это действие необратимо.`)) {
-      deleteBotMutation.mutate(id)
-    }
-  }
-
-  const handleAddNew = () => {
+  const openCreate = () => {
     setEditingBot(null)
-    botForm.reset()
-    setShowForm(true)
+    setModalOpen(true)
   }
 
-  const toggleLogs = (botId: string) => {
-    setExpandedLogs(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(botId)) {
-        newSet.delete(botId)
-      } else {
-        newSet.add(botId)
-      }
-      return newSet
-    })
+  const openEdit = (bot: Bot) => {
+    setEditingBot(bot)
+    setModalOpen(true)
   }
+
+  const submitPending = createBot.isPending || updateBot.isPending
 
   return (
     <>
-      <header className="hero">
-        <h1 className="hero__title">УПРАВЛЕНИЕ АККАУНТАМИ</h1>
-        <p className="hero__lead">
-          Добавляйте, редактируйте и удаляйте аккаунты ботов. Для каждого бота укажите Twitch логин, пароль и настройки поведения.
-        </p>
-      </header>
+      <PageHeader
+        title="Боты"
+        description="Аккаунты ботов: запуск, настройки поведения и логи работы"
+        actions={
+          <Button variant="accent" onClick={openCreate}>
+            <UserPlus size={16} aria-hidden="true" />
+            Добавить бота
+          </Button>
+        }
+      />
 
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
-          <h2>СПИСОК БОТОВ ({bots.length})</h2>
-          <InteractiveHoverButton
-            text="+ ДОБАВИТЬ БОТА"
-            loadingText="Открытие..."
-            successText="Готово!"
-            onClick={handleAddNew}
-            classes="bg-primary text-primary-foreground border-primary"
+      <div style={{ display: 'grid', gap: 16 }}>
+        {actionError && <Alert variant="error">{getErrorMessage(actionError)}</Alert>}
+
+        <Card title={`Список ботов (${bots.length})`}>
+          <BotsTable
+            bots={bots}
+            pending={pending}
+            onStart={(bot) => startBot.mutate(bot)}
+            onStop={(bot) => stopBot.mutate(bot)}
+            onEdit={openEdit}
+            onDelete={setDeletingBot}
+            onShowLogs={setLogsBot}
+            emptyAction={
+              <Button variant="accent" onClick={openCreate}>
+                Добавить бота
+              </Button>
+            }
           />
-        </div>
-
-        <BotFormModal
-          isOpen={showForm}
-          onClose={resetForm}
-          title={editingBot ? 'РЕДАКТИРОВАТЬ БОТА' : 'НОВЫЙ БОТ'}
-        >
-          <BotForm
-            formData={botForm.formData}
-            errors={botForm.errors}
-            touchedFields={botForm.touchedFields}
-            isValid={botForm.isValid}
-            isSubmitting={createBotMutation.isPending || updateBotMutation.isPending}
-            isEditing={!!editingBot}
-            showAdvanced={botForm.showAdvanced}
-            onShowAdvancedToggle={() => botForm.setShowAdvanced(!botForm.showAdvanced)}
-            onChange={botForm.handleChange}
-            onBlur={botForm.handleBlur}
-            onSubmit={handleSubmit}
-            onCancel={resetForm}
-          />
-        </BotFormModal>
-
-        <div className="bot-list">
-          {bots.map((bot: any) => (
-            <div key={bot.id}>
-              <TiltCard tiltLimit={8} scale={1.02} spotlight={true} className="cursor-target">
-                <div className={`bot-card ${bot.status === 'running' ? 'bot-card--running' : ''}`}>
-                  <div className="bot-card__header">
-                    <div>
-                      <div className="bot-card__title">{bot.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>@{bot.twitch_login}</div>
-                    </div>
-                    <span className={`bot-card__status bot-card__status--${bot.status}`}>
-                      {bot.status === 'running' ? '● РАБОТАЕТ' : '○ ОСТАНОВЛЕН'}
-                    </span>
-                  </div>
-
-                  <div className="bot-card__info">
-                    <div>ID: <code>{bot.id}</code></div>
-                    <div>ЛИЧНОСТЬ: {bot.personality}</div>
-                    <div>ЗАДЕРЖКА: {bot.min_delay_sec}-{bot.max_delay_sec} сек</div>
-                    <div>ЛИМИТ: {bot.rate_limit_per_min} сообщ/мин</div>
-                  </div>
-
-                  <div className="bot-card__actions">
-                    <InteractiveHoverButton
-                      text="✎ РЕДАКТИРОВАТЬ"
-                      loadingText="Открытие..."
-                      successText="Готово!"
-                      onClick={() => handleEdit(bot)}
-                      classes="flex-1 bg-transparent text-primary border-border hover:bg-accent"
-                    />
-                    <InteractiveHoverButton
-                      text="✕ УДАЛИТЬ"
-                      loadingText="Удаление..."
-                      successText="Удалено!"
-                      onClick={() => handleDelete(bot.id)}
-                      classes="flex-1 bg-destructive text-destructive-foreground border-destructive"
-                    />
-                    <button
-                      className="btn ghost cursor-target"
-                      onClick={() => toggleLogs(bot.id)}
-                      style={{
-                        background: expandedLogs.has(bot.id) ? 'var(--accent-primary)' : 'transparent',
-                        color: expandedLogs.has(bot.id) ? 'var(--bg-surface)' : 'var(--text-primary)',
-                      }}
-                    >
-                      📋 ЛОГИ
-                    </button>
-                  </div>
-                </div>
-              </TiltCard>
-
-              {/* Log Panel - shown when expanded */}
-              {expandedLogs.has(bot.id) && (
-                <BotLogPanel botId={bot.id} maxHeight={300} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {bots.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 'var(--space-12)', color: 'var(--text-muted)' }}>
-            <p style={{ fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              НЕТ БОТОВ. ДОБАВЬТЕ ПЕРВОГО БОТА ЧТОБЫ НАЧАТЬ.
-            </p>
-          </div>
-        )}
+        </Card>
       </div>
+
+      <BotModal
+        open={modalOpen}
+        onClose={closeModal}
+        editingBot={editingBot}
+        isSubmitting={submitPending}
+        error={modalError ? getErrorMessage(modalError) : null}
+        onSubmit={handleSubmit}
+      />
+
+      <Modal
+        open={deletingBot !== null}
+        onClose={() => setDeletingBot(null)}
+        title="Удалить бота?"
+        width={440}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeletingBot(null)} disabled={deleteBot.isPending}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              loading={deleteBot.isPending}
+              onClick={() => deletingBot && deleteBot.mutate(deletingBot.id)}
+            >
+              Удалить
+            </Button>
+          </>
+        }
+      >
+        <p style={{ fontSize: 14 }}>
+          Бот <strong>{deletingBot?.name}</strong> (@{deletingBot?.twitch_login}) будет удалён.
+          Действие необратимо.
+        </p>
+      </Modal>
+
+      <BotLogsDrawer bot={logsBot} onClose={() => setLogsBot(null)} />
     </>
   )
 }
