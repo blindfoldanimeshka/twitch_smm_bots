@@ -56,6 +56,18 @@ func parsePrivmsg(line string) (login, text string, ok bool) {
 	return match[1], match[2], true
 }
 
+// pongReply builds a well-formed PONG for a Twitch IRC PING line. It accepts
+// both "PING :payload" and "PING payload" forms and returns "PONG :<payload>".
+// For non-PING lines it returns ("", false).
+func pongReply(line string) (reply string, ok bool) {
+	rest, found := strings.CutPrefix(line, "PING")
+	if !found {
+		return "", false
+	}
+	payload := strings.TrimPrefix(strings.TrimSpace(rest), ":")
+	return "PONG :" + payload, true
+}
+
 // ChatMonitor anonymously joins a Twitch channel over IRC and records chat
 // traffic. It is strictly read-only: the only lines it ever writes are the
 // anonymous handshake (PASS/NICK/JOIN) and PONG replies.
@@ -272,13 +284,14 @@ func (m *ChatMonitor) runConnection(ctx context.Context, gen int, channel string
 		}
 
 		line := strings.TrimSpace(scanner.Text())
-		switch {
-		case line == "":
-		case strings.HasPrefix(line, "PING"):
-			payload := strings.TrimPrefix(strings.TrimPrefix(line, "PING"), ":")
-			if err := writeLine(conn, "PONG :"+payload); err != nil {
+		if reply, ok := pongReply(line); ok {
+			if err := writeLine(conn, reply); err != nil {
 				return fmt.Errorf("send PONG: %w", err)
 			}
+			continue
+		}
+		switch {
+		case line == "":
 		default:
 			if login, text, ok := parsePrivmsg(line); ok {
 				m.recordSession(gen, login, text)

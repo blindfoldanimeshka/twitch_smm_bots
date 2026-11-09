@@ -23,6 +23,24 @@ func TestParsePrivmsg(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestPongReply(t *testing.T) {
+	cases := []struct {
+		line  string
+		reply string
+		ok    bool
+	}{
+		{"PING :tmi.twitch.tv", "PONG :tmi.twitch.tv", true},
+		{"PING tmi.twitch.tv", "PONG :tmi.twitch.tv", true},
+		{"PRIVMSG #chan :hello", "", false},
+	}
+	for _, c := range cases {
+		reply, ok := pongReply(c.line)
+		if ok != c.ok || reply != c.reply {
+			t.Errorf("pongReply(%q) = (%q, %v), want (%q, %v)", c.line, reply, ok, c.reply, c.ok)
+		}
+	}
+}
+
 func TestChatMonitorTracksUniquesAndPrunes(t *testing.T) {
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	m := NewChatMonitor()
