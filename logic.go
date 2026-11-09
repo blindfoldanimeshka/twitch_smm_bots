@@ -459,6 +459,25 @@ func (bm *botManager) setAPIHub(hub *api.Hub) {
 	bm.apiHub = hub
 }
 
+// broadcastPresence publishes a bot's current presence state to the API
+// WebSocket hub. The hub and the runtime snapshot are read under bm.mu, but
+// the hub call happens outside the lock: broadcast fans out to client
+// channels and must never run while bm.mu is held. The payload carries only
+// public data (bot id, twitch login, state) and never secrets.
+func (bm *botManager) broadcastPresence(br *botRuntime) {
+	bm.mu.RLock()
+	hub := bm.apiHub
+	botID := br.cfg.ID
+	login := br.cfg.TwitchLogin
+	state := br.presenceState
+	bm.mu.RUnlock()
+
+	if hub == nil || state == "" {
+		return
+	}
+	hub.BroadcastBotPresence(botID, login, state, time.Now())
+}
+
 func (bm *botManager) logBotEvent(botID, logType, level, message string, contextData map[string]interface{}) {
 	log := storage.BotLog{
 		BotID:     botID,
@@ -540,16 +559,38 @@ func (bm *botManager) listIDs(enabledOnly bool) []string {
 	return ids
 }
 
+// botInfo snapshots the runtime into an api.BotInfo. The caller must hold
+// bm.mu (read or write): the presence fields are guarded by it. A runtime
+// that never started reports the stopped presence state.
+func (br *botRuntime) botInfo() api.BotInfo {
+	state := br.presenceState
+	if state == "" {
+		state = presenceStateStopped
+	}
+
+	info := api.BotInfo{
+		Config:        br.cfg,
+		Running:       br.running,
+		PresenceState: state,
+	}
+	if !br.sessionEndsAt.IsZero() {
+		endsAt := br.sessionEndsAt
+		info.SessionEndsAt = &endsAt
+	}
+	if !br.cooldownUntil.IsZero() {
+		until := br.cooldownUntil
+		info.CooldownUntil = &until
+	}
+	return info
+}
+
 func (bm *botManager) ListBots() []api.BotInfo {
 	bm.mu.RLock() // P0-5: RLock for read-only
 	defer bm.mu.RUnlock()
 
 	infos := make([]api.BotInfo, 0, len(bm.bots))
 	for _, br := range bm.bots {
-		infos = append(infos, api.BotInfo{
-			Config:  br.cfg,
-			Running: br.running,
-		})
+		infos = append(infos, br.botInfo())
 	}
 	return infos
 }
@@ -563,10 +604,8 @@ func (bm *botManager) GetBot(id string) (*api.BotInfo, error) {
 		return nil, fmt.Errorf("bot not found: %s", id)
 	}
 
-	return &api.BotInfo{
-		Config:  br.cfg,
-		Running: br.running,
-	}, nil
+	info := br.botInfo()
+	return &info, nil
 }
 
 func (bm *botManager) StartBot(ctx context.Context, id string) error {
@@ -769,6 +808,7 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	go bm.runBotLoop(ctx, br)
 
 	bm.beginPresenceSession(botID, disableLLM)
+	bm.broadcastPresence(br)
 
 	if persist {
 		if err := bm.store.SetBotEnabled(context.Background(), botID, true); err != nil {
@@ -787,6 +827,14 @@ func (bm *botManager) beginPresenceSession(botID string, disableLLM bool) {
 	bm.mu.Lock()
 	br, ok := bm.bots[botID]
 	if !ok {
+		bm.mu.Unlock()
+		return
+	}
+
+	// Re-check running under the lock: a concurrent stop may have landed
+	// between the start and this call. A stopped bot must not go online or
+	// register a session timer.
+	if !br.running {
 		bm.mu.Unlock()
 		return
 	}
@@ -869,6 +917,8 @@ func (bm *botManager) pauseBot(botID string) {
 	}
 	bm.mu.Unlock()
 
+	bm.broadcastPresence(br)
+
 	// Farewell before the client is closed; network I/O must not happen
 	// while bm.mu is held.
 	if farewellEnabled {
@@ -930,16 +980,23 @@ func (bm *botManager) resumeAfterCooldown(botID string, wasDisableLLM bool) {
 }
 
 // markBotError flags a runtime that stopped because of too many consecutive
-// errors: no cooldown return may be scheduled afterwards.
+// errors: no cooldown return may be scheduled afterwards. The runtime reports
+// stopped (running=false) so the UI shows it and startBot may run again —
+// only a manual restart brings an errored bot back. cfg.Enabled stays true:
+// the bot is still desired, just errored.
 func (bm *botManager) markBotError(br *botRuntime) {
 	bm.mu.Lock()
 	br.presenceState = presenceStateError
 	br.stoppedByError = true
+	br.running = false
+	br.sessionEndsAt = time.Time{}
 	if br.presenceTimer != nil {
 		br.presenceTimer.Stop()
 		br.presenceTimer = nil
 	}
 	bm.mu.Unlock()
+
+	bm.broadcastPresence(br)
 }
 
 func (bm *botManager) stopAudio() {
@@ -994,6 +1051,8 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 	br.cfg.Enabled = false
 	br.client.Close()
 	bm.mu.Unlock()
+
+	bm.broadcastPresence(br)
 
 	// P0-1: Wait for graceful shutdown with timeout
 	gracefulTimeout := 10 * time.Second

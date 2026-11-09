@@ -59,6 +59,12 @@ type StreamStatusProvider interface {
 type BotInfo struct {
 	Config  storage.BotConfig
 	Running bool
+
+	// Presence simulation state. The time pointers are set only when a
+	// session end or cooldown is actually scheduled.
+	PresenceState string
+	SessionEndsAt *time.Time
+	CooldownUntil *time.Time
 }
 
 type Handler struct {
@@ -157,27 +163,43 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(health)
 }
 
+// botDTOFromInfo maps a BotInfo to its API representation. Presence time
+// pointers are copied so the DTO never aliases manager-owned time values.
+func botDTOFromInfo(bot BotInfo) BotDTO {
+	status := "stopped"
+	if bot.Running {
+		status = "running"
+	}
+
+	dto := BotDTO{
+		ID:              bot.Config.ID,
+		TwitchLogin:     bot.Config.TwitchLogin,
+		Name:            bot.Config.Name,
+		Personality:     bot.Config.Personality,
+		MinDelaySec:     bot.Config.MinDelaySec,
+		MaxDelaySec:     bot.Config.MaxDelaySec,
+		RateLimitPerMin: bot.Config.RateLimitPerMin,
+		Enabled:         bot.Config.Enabled,
+		Status:          status,
+		PresenceState:   bot.PresenceState,
+	}
+	if bot.SessionEndsAt != nil {
+		endsAt := *bot.SessionEndsAt
+		dto.SessionEndsAt = &endsAt
+	}
+	if bot.CooldownUntil != nil {
+		until := *bot.CooldownUntil
+		dto.CooldownUntil = &until
+	}
+	return dto
+}
+
 func (h *Handler) ListBots(w http.ResponseWriter, r *http.Request) {
 	bots := h.manager.ListBots()
 	dtos := make([]BotDTO, len(bots))
 
 	for i, bot := range bots {
-		status := "stopped"
-		if bot.Running {
-			status = "running"
-		}
-
-		dtos[i] = BotDTO{
-			ID:              bot.Config.ID,
-			TwitchLogin:     bot.Config.TwitchLogin,
-			Name:            bot.Config.Name,
-			Personality:     bot.Config.Personality,
-			MinDelaySec:     bot.Config.MinDelaySec,
-			MaxDelaySec:     bot.Config.MaxDelaySec,
-			RateLimitPerMin: bot.Config.RateLimitPerMin,
-			Enabled:         bot.Config.Enabled,
-			Status:          status,
-		}
+		dtos[i] = botDTOFromInfo(bot)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -194,22 +216,7 @@ func (h *Handler) GetBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := "stopped"
-	if bot.Running {
-		status = "running"
-	}
-
-	dto := BotDTO{
-		ID:              bot.Config.ID,
-		TwitchLogin:     bot.Config.TwitchLogin,
-		Name:            bot.Config.Name,
-		Personality:     bot.Config.Personality,
-		MinDelaySec:     bot.Config.MinDelaySec,
-		MaxDelaySec:     bot.Config.MaxDelaySec,
-		RateLimitPerMin: bot.Config.RateLimitPerMin,
-		Enabled:         bot.Config.Enabled,
-		Status:          status,
-	}
+	dto := botDTOFromInfo(*bot)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(dto)
@@ -560,11 +567,36 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(settings)
 }
 
+// presenceRangesValid reports whether the presence ranges in settings may be
+// stored. An all-zero payload means the client did not send presence values
+// (the runtime then uses its defaults) and is accepted unchanged; any
+// supplied range must satisfy 1 <= min <= max <= 240.
+func presenceRangesValid(s *storage.Settings) bool {
+	sessionMin, sessionMax := s.PresenceSessionMinMinutes, s.PresenceSessionMaxMinutes
+	cooldownMin, cooldownMax := s.PresenceCooldownMinMinutes, s.PresenceCooldownMaxMinutes
+
+	if sessionMin == 0 && sessionMax == 0 && cooldownMin == 0 && cooldownMax == 0 {
+		return true
+	}
+
+	return sessionMin >= 1 && sessionMin <= sessionMax && sessionMax <= 240 &&
+		cooldownMin >= 1 && cooldownMin <= cooldownMax && cooldownMax <= 240
+}
+
 func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var settings storage.Settings
 	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
 		h.logSettingsChange("error", "Invalid settings format", nil)
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Presence ranges must be sane before anything is written or applied.
+	// A payload without any presence values (all zero) means "not provided"
+	// and keeps the stored/default configuration; any supplied range must
+	// satisfy 1 <= min <= max <= 240.
+	if !presenceRangesValid(&settings) {
+		http.Error(w, `{"error":"presence ranges must satisfy 1 <= min <= max <= 240"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -675,17 +707,54 @@ func (h *Handler) calculateSettingsChanges(old, new *storage.Settings) map[strin
 		}
 	}
 
-	if old.RotationEnabled != new.RotationEnabled {
-		changes["rotation_enabled"] = map[string]interface{}{
-			"old": old.RotationEnabled,
-			"new": new.RotationEnabled,
+	// Presence simulation. Rotation fields are deliberately absent: rotation
+	// was removed from the runtime; the DB columns stay for compatibility.
+	if old.PresenceEnabled != new.PresenceEnabled {
+		changes["presence_enabled"] = map[string]interface{}{
+			"old": old.PresenceEnabled,
+			"new": new.PresenceEnabled,
 		}
 	}
 
-	if old.RotationInterval != new.RotationInterval {
-		changes["rotation_interval"] = map[string]interface{}{
-			"old": old.RotationInterval,
-			"new": new.RotationInterval,
+	if old.PresenceSessionMinMinutes != new.PresenceSessionMinMinutes {
+		changes["presence_session_min_minutes"] = map[string]interface{}{
+			"old": old.PresenceSessionMinMinutes,
+			"new": new.PresenceSessionMinMinutes,
+		}
+	}
+
+	if old.PresenceSessionMaxMinutes != new.PresenceSessionMaxMinutes {
+		changes["presence_session_max_minutes"] = map[string]interface{}{
+			"old": old.PresenceSessionMaxMinutes,
+			"new": new.PresenceSessionMaxMinutes,
+		}
+	}
+
+	if old.PresenceCooldownMinMinutes != new.PresenceCooldownMinMinutes {
+		changes["presence_cooldown_min_minutes"] = map[string]interface{}{
+			"old": old.PresenceCooldownMinMinutes,
+			"new": new.PresenceCooldownMinMinutes,
+		}
+	}
+
+	if old.PresenceCooldownMaxMinutes != new.PresenceCooldownMaxMinutes {
+		changes["presence_cooldown_max_minutes"] = map[string]interface{}{
+			"old": old.PresenceCooldownMaxMinutes,
+			"new": new.PresenceCooldownMaxMinutes,
+		}
+	}
+
+	if old.PresenceGreetingEnabled != new.PresenceGreetingEnabled {
+		changes["presence_greeting_enabled"] = map[string]interface{}{
+			"old": old.PresenceGreetingEnabled,
+			"new": new.PresenceGreetingEnabled,
+		}
+	}
+
+	if old.PresenceFarewellEnabled != new.PresenceFarewellEnabled {
+		changes["presence_farewell_enabled"] = map[string]interface{}{
+			"old": old.PresenceFarewellEnabled,
+			"new": new.PresenceFarewellEnabled,
 		}
 	}
 
@@ -763,11 +832,26 @@ func (h *Handler) formatSettingsChangeMessage(changes map[string]interface{}) st
 	if _, ok := changes["audio_enabled"]; ok {
 		parts = append(parts, "Audio setting changed")
 	}
-	if _, ok := changes["rotation_enabled"]; ok {
-		parts = append(parts, "Rotation setting changed")
+	if _, ok := changes["presence_enabled"]; ok {
+		parts = append(parts, "Presence simulation changed")
 	}
-	if _, ok := changes["rotation_interval"]; ok {
-		parts = append(parts, "Rotation interval changed")
+	if _, ok := changes["presence_session_min_minutes"]; ok {
+		parts = append(parts, "Presence session min changed")
+	}
+	if _, ok := changes["presence_session_max_minutes"]; ok {
+		parts = append(parts, "Presence session max changed")
+	}
+	if _, ok := changes["presence_cooldown_min_minutes"]; ok {
+		parts = append(parts, "Presence cooldown min changed")
+	}
+	if _, ok := changes["presence_cooldown_max_minutes"]; ok {
+		parts = append(parts, "Presence cooldown max changed")
+	}
+	if _, ok := changes["presence_greeting_enabled"]; ok {
+		parts = append(parts, "Presence greeting changed")
+	}
+	if _, ok := changes["presence_farewell_enabled"]; ok {
+		parts = append(parts, "Presence farewell changed")
 	}
 	if _, ok := changes["debug_mode"]; ok {
 		parts = append(parts, "Debug mode changed")

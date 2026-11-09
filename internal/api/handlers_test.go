@@ -891,3 +891,207 @@ func TestGetStreamStatusExcludesBots(t *testing.T) {
 	assert.Equal(t, "a", provider.gotChannel)
 	assert.Contains(t, provider.gotExclude, "bot1", "bot logins must be passed as the exclusion set")
 }
+
+func TestListBotsIncludesPresence(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+
+	cooldownUntil := time.Now().Add(15 * time.Minute)
+	mockManager.On("ListBots").Return([]BotInfo{
+		{
+			Config: storage.BotConfig{
+				ID:          "bot-1",
+				TwitchLogin: "testlogin",
+				Name:        "Test Bot",
+				Personality: "нейтрал",
+				Enabled:     true,
+			},
+			Running:       false,
+			PresenceState: "cooldown",
+			CooldownUntil: &cooldownUntil,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bots", nil)
+	w := httptest.NewRecorder()
+
+	handler.ListBots(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var bots []BotDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bots))
+	require.Len(t, bots, 1)
+	assert.Equal(t, "cooldown", bots[0].PresenceState)
+	require.NotNil(t, bots[0].CooldownUntil, "cooldown_until must be present in JSON")
+	assert.True(t, cooldownUntil.Equal(*bots[0].CooldownUntil))
+	assert.Nil(t, bots[0].SessionEndsAt, "session_ends_at must be omitted for a cooldown bot")
+}
+
+func TestGetBotIncludesPresence(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+
+	sessionEndsAt := time.Now().Add(25 * time.Minute)
+	mockManager.On("GetBot", "bot-1").Return(&BotInfo{
+		Config: storage.BotConfig{
+			ID:          "bot-1",
+			TwitchLogin: "testlogin",
+			Name:        "Test Bot",
+			Personality: "нейтрал",
+			Enabled:     true,
+		},
+		Running:       true,
+		PresenceState: "online",
+		SessionEndsAt: &sessionEndsAt,
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bots/bot-1", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.GetBot(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var bot BotDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bot))
+	assert.Equal(t, "online", bot.PresenceState)
+	require.NotNil(t, bot.SessionEndsAt, "session_ends_at must be present in JSON")
+	assert.True(t, sessionEndsAt.Equal(*bot.SessionEndsAt))
+	assert.Nil(t, bot.CooldownUntil, "cooldown_until must be omitted for an online bot")
+}
+
+func TestUpdateSettingsRejectsInvalidPresenceRange(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+	handler.settingsManager = mockSettings
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"presence_session_min_minutes": 50,
+		"presence_session_max_minutes": 20,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "presence ranges must satisfy 1 <= min <= max <= 240")
+	mockStore.AssertNotCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
+	mockSettings.AssertNotCalled(t, "ApplySettings", mock.Anything, mock.Anything)
+}
+
+func TestUpdateSettingsAcceptsValidPresenceRange(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+	handler.settingsManager = mockSettings
+	handler.envLookup = fixedEnv(nil)
+
+	mockStore.On("GetSettings", mock.Anything).Return(&storage.Settings{ID: "default"}, nil)
+
+	var storeReceived *storage.Settings
+	mockStore.On("UpdateSettings", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { storeReceived = args.Get(1).(*storage.Settings) }).
+		Return(nil)
+	mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+	mockSettings.On("ApplySettings", mock.Anything, mock.Anything).Return(nil)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"presence_session_min_minutes":  10,
+		"presence_session_max_minutes":  30,
+		"presence_cooldown_min_minutes": 5,
+		"presence_cooldown_max_minutes": 15,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, storeReceived)
+	assert.Equal(t, 10, storeReceived.PresenceSessionMinMinutes)
+	assert.Equal(t, 30, storeReceived.PresenceSessionMaxMinutes)
+	assert.Equal(t, 5, storeReceived.PresenceCooldownMinMinutes)
+	assert.Equal(t, 15, storeReceived.PresenceCooldownMaxMinutes)
+	mockSettings.AssertExpectations(t)
+}
+
+func TestCalculateSettingsChangesIncludesPresence(t *testing.T) {
+	handler := &Handler{}
+	old := &storage.Settings{
+		PresenceEnabled:            true,
+		PresenceSessionMinMinutes:  20,
+		PresenceSessionMaxMinutes:  40,
+		PresenceCooldownMinMinutes: 10,
+		PresenceCooldownMaxMinutes: 20,
+		PresenceGreetingEnabled:    true,
+		PresenceFarewellEnabled:    true,
+		RotationEnabled:            true,
+		RotationInterval:           60,
+	}
+	new := &storage.Settings{
+		PresenceEnabled:            false,
+		PresenceSessionMinMinutes:  10,
+		PresenceSessionMaxMinutes:  30,
+		PresenceCooldownMinMinutes: 5,
+		PresenceCooldownMaxMinutes: 15,
+		PresenceGreetingEnabled:    false,
+		PresenceFarewellEnabled:    false,
+		RotationEnabled:            true,
+		RotationInterval:           60,
+	}
+
+	changes := handler.calculateSettingsChanges(old, new)
+
+	assert.Contains(t, changes, "presence_enabled")
+	assert.Contains(t, changes, "presence_session_min_minutes")
+	assert.Contains(t, changes, "presence_session_max_minutes")
+	assert.Contains(t, changes, "presence_cooldown_min_minutes")
+	assert.Contains(t, changes, "presence_cooldown_max_minutes")
+	assert.Contains(t, changes, "presence_greeting_enabled")
+	assert.Contains(t, changes, "presence_farewell_enabled")
+
+	// Rotation is removed from the change log: the DB fields stay for
+	// compatibility only.
+	assert.NotContains(t, changes, "rotation_enabled")
+	assert.NotContains(t, changes, "rotation_interval")
+
+	message := handler.formatSettingsChangeMessage(changes)
+	assert.NotContains(t, message, "Rotation")
+}
+
+func TestBroadcastBotPresence(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	subscriber := &Client{hub: hub, send: make(chan []byte, 16)}
+	hub.register <- subscriber
+
+	at := time.Now()
+	hub.BroadcastBotPresence("bot-1", "testlogin", "cooldown", at)
+
+	select {
+	case raw := <-subscriber.send:
+		var msg WSMessage
+		require.NoError(t, json.Unmarshal(raw, &msg))
+		assert.Equal(t, "bot_presence_changed", msg.Type)
+
+		payloadBytes, err := json.Marshal(msg.Payload)
+		require.NoError(t, err)
+		var payload BotPresencePayload
+		require.NoError(t, json.Unmarshal(payloadBytes, &payload))
+		assert.Equal(t, "bot-1", payload.BotID)
+		assert.Equal(t, "testlogin", payload.Login)
+		assert.Equal(t, "cooldown", payload.State)
+		assert.True(t, at.Equal(payload.At), "payload 'at' must carry the event time")
+	case <-time.After(2 * time.Second):
+		t.Fatal("BroadcastBotPresence did not deliver a message to the subscriber")
+	}
+}

@@ -87,6 +87,23 @@ func (h *Hub) BroadcastBotStatus(botID, status string) {
 	h.broadcast <- data
 }
 
+// BroadcastBotPresence publishes a presence state transition (online,
+// cooldown, stopped, error) for a bot. The payload carries only public data:
+// bot id, twitch login, state and the event time.
+func (h *Hub) BroadcastBotPresence(botID, login, state string, at time.Time) {
+	msg := WSMessage{
+		Type: "bot_presence_changed",
+		Payload: BotPresencePayload{
+			BotID: botID,
+			Login: login,
+			State: state,
+			At:    at,
+		},
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
 func (h *Hub) BroadcastBotMessage(botID, message, personality, channel string) {
 	msg := WSMessage{
 		Type: "bot_message_sent",

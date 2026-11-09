@@ -14,6 +14,11 @@ type BotDTO struct {
 	Status          string `json:"status"`
 	ProxyID         string `json:"proxy_id,omitempty"`
 	AutoRotateProxy bool   `json:"auto_rotate_proxy"`
+
+	// Presence simulation state; pointers are set only when a value exists.
+	PresenceState string     `json:"presence_state"`
+	SessionEndsAt *time.Time `json:"session_ends_at,omitempty"`
+	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
 }
 
 type CreateBotRequest struct {
@@ -78,6 +83,13 @@ type WSMessage struct {
 type BotStatusPayload struct {
 	BotID  string `json:"bot_id"`
 	Status string `json:"status"`
+}
+
+type BotPresencePayload struct {
+	BotID string    `json:"bot_id"`
+	Login string    `json:"login"`
+	State string    `json:"state"`
+	At    time.Time `json:"at"`
 }
 
 type BotMessagePayload struct {

@@ -252,12 +252,66 @@ func TestErrorStopDoesNotScheduleReturn(t *testing.T) {
 	assert.True(t, br.stoppedByError)
 	assert.True(t, fakeAfter.timers[0].wasStopped(), "error stop must cancel the presence timer")
 
-	// Invoking the captured session-pause callback must do nothing.
+	// Invoking the captured session-pause callback must do nothing: the
+	// errored runtime stays parked (markBotError already reported it as not
+	// running) and no cooldown return may fire.
 	fakeAfter.callbacks[0]()
 	assert.Equal(t, presenceStateError, br.presenceState)
-	assert.True(t, br.running, "pauseBot must not touch an errored runtime")
+	assert.False(t, br.running, "pauseBot must not resurrect an errored runtime")
 	assert.True(t, fake.IsConnected(), "client must not be closed for an errored bot")
 	assert.Equal(t, 1, fakeAfter.scheduled(), "no restart may be scheduled after an error stop")
+}
+
+// TestErrorStopAllowsManualRestart verifies that after markBotError the
+// runtime reports stopped (running=false) so the UI shows it and startBot may
+// run again, while cfg.Enabled stays true: the bot is still desired, just
+// errored. Only a manual restart brings it back.
+func TestErrorStopAllowsManualRestart(t *testing.T) {
+	bm, _ := newPresenceTestManager(t)
+
+	bm.mu.Lock()
+	bm.newIRCClient = func(login, password, channel string) TwitchClient {
+		return newFakeTwitchClient()
+	}
+	bm.bots["bot-1"] = &botRuntime{
+		cfg: storage.BotConfig{
+			ID:             "bot-1",
+			TwitchLogin:    "login",
+			Enabled:        true,
+			CurrentChannel: "testchannel",
+		},
+		client:        newFakeTwitchClient(),
+		running:       true,
+		cancel:        func() {},
+		presenceState: presenceStateOnline,
+	}
+	bm.presence = presenceConfig{enabled: true, greeting: false, farewell: false}
+	bm.mu.Unlock()
+
+	bm.markBotError(bm.bots["bot-1"])
+
+	bm.mu.RLock()
+	running := bm.bots["bot-1"].running
+	enabled := bm.bots["bot-1"].cfg.Enabled
+	state := bm.bots["bot-1"].presenceState
+	bm.mu.RUnlock()
+	assert.False(t, running, "an error-stopped bot must report stopped")
+	assert.True(t, enabled, "error stop must keep cfg.Enabled: the bot is still desired")
+	assert.Equal(t, presenceStateError, state)
+
+	// A manual restart must be allowed to run again from the errored state.
+	// disableLLM=true keeps the runtime loop free of LLM errors in tests.
+	require.NoError(t, bm.startBot(context.Background(), "bot-1", false, true))
+
+	bm.mu.RLock()
+	restarted := bm.bots["bot-1"].running
+	restartState := bm.bots["bot-1"].presenceState
+	bm.mu.RUnlock()
+	assert.True(t, restarted, "startBot must be allowed to run after an error stop")
+	assert.Equal(t, presenceStateOnline, restartState)
+
+	// Cleanup: stop the restarted loop and any pending presence timer.
+	require.NoError(t, bm.stopBot("bot-1", false))
 }
 
 // TestDisablePresenceCancelsCooldown verifies ApplySettings with
