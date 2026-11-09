@@ -96,7 +96,7 @@ flowchart TD
 | GET | `/api/proxies` | `ListProxies` | прокси |
 | POST | `/api/proxies` | `CreateProxy` | добавить прокси |
 | DELETE | `/api/proxies/{id}` | `DeleteProxy` | удалить прокси |
-| GET | `/api/settings` | `GetSettings` | настройки, ключ замаскирован |
+| GET | `/api/settings` | `GetSettings` | настройки, `llm_api_key` и `twitch_client_secret` замаскированы |
 | POST | `/api/settings` | `UpdateSettings` | полная замена строки настроек |
 | GET | `/api/settings/logs` | `GetSettingsLogs` | журнал настроек |
 | GET | `/api/settings/test-audio` | `TestAudio` | тест аудио |
@@ -121,7 +121,7 @@ sequenceDiagram
     UI->>API: POST /api/bots/{id}/start
     API->>M: startBot
     M->>IRC: Connect()
-    M->>Loop: go runBotLoop(ctx, br)  ← сейчас отсутствует, критический баг
+    M->>Loop: go runBotLoop(ctx, br)
     Loop->>LLM: Generate()
     LLM-->>Loop: text
     Loop->>IRC: SendMessage()
@@ -132,7 +132,8 @@ sequenceDiagram
 
 `POST /api/settings` → `UpdateSettings` (полная замена) → `ApplySettings` →
 `llm.Reconfigure` + каналы + audio + (planned) streamMonitor/presence.
-Ключ: пустой `llm_api_key` сохраняет старый; ответ всегда маскирует ключ.
+Ключ: пустой входящий `llm_api_key` или `twitch_client_secret` сохраняет
+старое значение; ответ всегда маскирует оба (`*_set` сообщает наличие).
 
 ### 5.3 Планируемый Stream
 
@@ -194,22 +195,38 @@ GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удалены.
 
 ## 8. Инварианты и мины
 
-1. **`runBotLoop` должен запускаться из `startBot`.** Сейчас вызова нет: боты
-   подключаются, но не генерируют; `stopBot` ждёт 10 с. Не удаляй этот запуск.
-2. **`StopBot` не должен авто-возвращать бота.** Авто-возврат только из
+1. **`runBotLoop` должен запускаться из `startBot`.** Вызов есть
+   (`logic.go`: `go bm.runBotLoop(ctx, br)`), боты генерируют и отправляют.
+   Не удаляй этот запуск: без него бот подключается, но молчит.
+2. **`stopBot` ждёт цикл только если он работал.** Ожидание `br.stopped`
+   возможно лишь при `wasRunning`; бот, который никогда не запускался,
+   останавливается сразу, без 10-секундного graceful wait.
+3. **`IRCClient.WaitForRateLimit` не держит `c.mu` во время сна.** Бэкофф
+   может достигать 5 минут, и `Close`, `IsRateLimited` и `SendMessage` обязаны
+   оставаться отзывчивыми всё это время. Сон должен быть между `Unlock`
+   после чтения `rateLimitUntil` и повторным `Lock`: не переноси `time.Sleep`
+   под залок и не оборачивай его в `defer c.mu.Unlock()`.
+4. **`StopBot` не должен авто-возвращать бота.** Авто-возврат только из
    presence cooldown. Error stop — без возврата.
-3. **Ключи и токены:** `llm_api_key` никогда не возвращается; OAuth-токены
+5. **Ключи и токены:** `llm_api_key` никогда не возвращается; OAuth-токены
    ботов не логируются и не показываются после сохранения.
-4. **`openrouter/free` — роутер.** Не сравнивай ответ `model` с этой строкой;
+6. **`twitch_client_secret` — только на запись.** `GET /api/settings`
+   возвращает пустое значение и `twitch_client_secret_set` (есть секрет или
+   нет). Пустой входящий секрет при сохранении сохраняет хранимый — не
+   «очищай» его и не начинай отдавать значение наружу.
+7. **`openrouter/free` — роутер.** Не сравнивай ответ `model` с этой строкой;
    paid определяется через `usage.cost` или `model == paidModel`.
-5. **Настройки — полная замена.** `POST /api/settings` перезаписывает всю
+8. **Настройки — полная замена.** `POST /api/settings` перезаписывает всю
    строку; не отправляй частичный JSON.
-6. **Ротация удаляется.** `rotation_*` остаются в БД, но не используются.
-7. **Twitch GQL неофициальный.** Ошибки не должны ронять приложение; UI
-   показывает «нет данных».
-8. **Присутствие не накручивает зрителей.** Только IRC + сообщения.
-9. **Тесты storage интеграционные.** Нужен Postgres; без него часть тестов
-   падает на connect, а не skip.
+9. **`messages_per_min` считает только генерацию.** В статистику попадают
+   лишь успешные отправки из цикла генерации; greeting/farewell-фразы
+   presence не должны увеличивать счётчик.
+10. **Ротация удаляется.** `rotation_*` остаются в БД, но не используются.
+11. **Twitch GQL неофициальный.** Ошибки не должны ронять приложение; UI
+    показывает «нет данных».
+12. **Присутствие не накручивает зрителей.** Только IRC + сообщения.
+13. **Тесты storage интеграционные.** Нужен Postgres; без него часть тестов
+    падает на connect, а не skip.
 
 ## 9. Команды
 

@@ -65,9 +65,13 @@
     { "from": "planned-stream-page", "to": "frontend-client", "kind": "stream status (planned)" }
   ],
   "invariants": [
-    "startBot must launch go runBotLoop (currently missing and must be fixed)",
+    "startBot must launch go runBotLoop; without it the bot connects but never generates",
+    "stopBot waits on br.stopped only when the loop was actually running; a never-started bot stops immediately",
+    "IRCClient.WaitForRateLimit must never sleep while holding c.mu; Close/IsRateLimited/SendMessage stay responsive during a backoff",
     "StopBot and error-stop must not auto-restart; only presence cooldown restarts",
     "llm_api_key is never returned; OAuth bot tokens are never logged",
+    "twitch_client_secret is never returned by GET /api/settings; twitch_client_secret_set reports presence and an empty incoming secret keeps the stored one",
+    "messages_per_min counts only generation-loop sends; greeting/farewell presence phrases are excluded",
     "openrouter/free is a router: use usage.cost or paid model for paid detection",
     "POST /api/settings replaces the whole settings row",
     "rotation_* DB columns stay for compatibility but are unused after this plan",
