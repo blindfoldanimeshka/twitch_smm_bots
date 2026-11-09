@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ScrollText, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api/client'
@@ -41,26 +41,13 @@ function formatTime(entry: BotLogEntry): string {
 export function BotLogsDrawer({ bot, onClose }: BotLogsDrawerProps) {
   const open = bot !== null
   const drawerRef = useRef<HTMLElement>(null)
-  useFocusTrap(drawerRef, open)
+  useFocusTrap(drawerRef, open, onClose)
 
   const { data: logs = [], isLoading, error } = useQuery({
     queryKey: ['bot-logs', bot?.id],
     queryFn: async () => (await api.getBotLogs(bot!.id, 100)).data,
     enabled: open,
   })
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
 
   if (!open || bot === null) {
     return null
@@ -80,6 +67,7 @@ export function BotLogsDrawer({ bot, onClose }: BotLogsDrawerProps) {
         role="dialog"
         aria-modal="true"
         aria-label={`Логи бота ${bot.name}`}
+        tabIndex={-1}
         style={{
           alignSelf: 'stretch',
           margin: '0 0 0 auto',

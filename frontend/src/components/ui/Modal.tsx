@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useId, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
@@ -16,20 +16,7 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children, footer, width = 560 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
-  useFocusTrap(dialogRef, open)
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
+  useFocusTrap(dialogRef, open, onClose)
 
   if (!open) {
     return null
@@ -50,6 +37,7 @@ export function Modal({ open, onClose, title, children, footer, width = 560 }: M
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         style={{ maxWidth: width }}
       >
         <header className="modal__header">

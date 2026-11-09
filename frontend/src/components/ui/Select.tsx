@@ -14,7 +14,17 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   options?: SelectOption[]
 }
 
-export function Select({ label, error, options, id, className, children, ...rest }: SelectProps) {
+export function Select({
+  label,
+  error,
+  options,
+  id,
+  className,
+  children,
+  'aria-describedby': describedBy,
+  'aria-invalid': ariaInvalid,
+  ...rest
+}: SelectProps) {
   const autoId = useId()
   const selectId = id ?? autoId
   const errorId = `${autoId}-error`
@@ -30,7 +40,8 @@ export function Select({ label, error, options, id, className, children, ...rest
         id={selectId}
         className={clsx('select', className)}
         {...rest}
-        {...(error ? { 'aria-invalid': true, 'aria-describedby': errorId } : null)}
+        aria-invalid={error && ariaInvalid === undefined ? true : ariaInvalid}
+        aria-describedby={error ? [describedBy, errorId].filter(Boolean).join(' ') : describedBy}
       >
         {options ? options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>) : children}
       </select>
