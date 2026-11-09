@@ -21,9 +21,9 @@ type Server struct {
 	corsOrigins []string
 }
 
-func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, cacheClient CacheClient, apiKey string, port int, corsOrigins []string) *Server {
+func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, cacheClient CacheClient, streamMonitor StreamStatusProvider, apiKey string, port int, corsOrigins []string) *Server {
 	hub := NewHub()
-	handler := NewHandler(manager, store, hub, llmClient, cacheClient)
+	handler := NewHandler(manager, store, hub, llmClient, cacheClient, streamMonitor)
 
 	s := &Server{
 		handler:     handler,
@@ -56,6 +56,7 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 
 	api.HandleFunc("/health", handler.HealthCheck).Methods("GET")
 	api.HandleFunc("/llm/status", handler.GetLLMStatus).Methods("GET")
+	api.HandleFunc("/twitch/stream", handler.GetStreamStatus).Methods("GET")
 	api.HandleFunc("/bots", handler.ListBots).Methods("GET")
 	api.HandleFunc("/bots", handler.CreateBot).Methods("POST")
 	api.HandleFunc("/bots/{id}", handler.GetBot).Methods("GET")

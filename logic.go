@@ -167,6 +167,7 @@ type botManager struct {
 	llmClient       *llm.Client
 	cacheClient     *cache.Client
 	helixClient     *twitch.HelixClient
+	streamMonitor   *twitch.StreamMonitor
 	channel         string
 	audioConfig     audio.Config
 	audioService    *audio.Service
@@ -232,6 +233,7 @@ func newBotManager(
 	globalLimit int,
 	audioCfg audio.Config,
 	debugMode bool,
+	streamMonitor *twitch.StreamMonitor,
 ) *botManager {
 	if runtimeCtx == nil {
 		runtimeCtx = context.Background()
@@ -242,6 +244,7 @@ func newBotManager(
 		llmClient:     llmClient,
 		cacheClient:   cacheClient,
 		helixClient:   helixClient,
+		streamMonitor: streamMonitor,
 		channel:       channel,
 		audioConfig:   audioCfg,
 		globalLimiter: newGlobalLimiter(globalLimit, cacheClient),
@@ -1075,6 +1078,12 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 		slog.Info("Primary Twitch channel set from UI settings", "channel", primaryChannel)
 	}
 
+	// Keep the public stream monitor on the configured channels (it
+	// normalizes, dedupes and caps the list itself).
+	if bm.streamMonitor != nil {
+		bm.streamMonitor.SetChannels(settings.Channels)
+	}
+
 	if settings.RotationEnabled && len(settings.Channels) > 1 {
 		bm.stopRotation()
 		bm.startRotation(baseCtx, settings.Channels, settings.RotationInterval)
@@ -1353,6 +1362,13 @@ func main() {
 
 	llmClient.Reconfigure(mustResolve(llmEnv, llm.DBConfigFromSettings(settings)))
 
+	// One public stream monitor for the app lifetime; the API serves it.
+	monitor := twitch.NewStreamMonitor()
+	defer monitor.Close()
+	if settings != nil {
+		monitor.SetChannels(settings.Channels)
+	}
+
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	if err := llmClient.HealthCheck(healthCtx); err != nil {
 		healthCancel()
@@ -1374,7 +1390,7 @@ func main() {
 		debugMode = settings.DebugMode
 	}
 
-	manager := newBotManager(store, llmClient, cacheClient, nil, ctx, channel, globalLimit, audioCfg, debugMode)
+	manager := newBotManager(store, llmClient, cacheClient, nil, ctx, channel, globalLimit, audioCfg, debugMode, monitor)
 	if err := manager.loadBots(ctx); err != nil {
 		slog.Error("load bots error", "error", err)
 		os.Exit(1)
@@ -1384,7 +1400,7 @@ func main() {
 		slog.Warn("no bots found in database; add rows into table bots first")
 	}
 
-	apiServer := api.NewServer(manager, store, llmClient, cacheClient, apiKey, apiPort, corsOrigins)
+	apiServer := api.NewServer(manager, store, llmClient, cacheClient, monitor, apiKey, apiPort, corsOrigins)
 	manager.setAPIHub(apiServer.Hub())
 
 	go func() {

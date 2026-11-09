@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/twitch"
 )
 
 type BotManager interface {
@@ -47,6 +48,13 @@ type StoreInterface interface {
 	Ping(ctx context.Context) error
 }
 
+// StreamStatusProvider serves public stream state for the monitored channels;
+// *twitch.StreamMonitor is the production implementation.
+type StreamStatusProvider interface {
+	Channels() []string
+	Snapshot(ctx context.Context, channel string, excludeLogins map[string]struct{}) twitch.StreamStatus
+}
+
 type BotInfo struct {
 	Config  storage.BotConfig
 	Running bool
@@ -59,6 +67,7 @@ type Handler struct {
 	hub             *Hub
 	llmClient       *llm.Client
 	cacheClient     CacheClient
+	streamMonitor   StreamStatusProvider
 	envLookup       func(string) string
 }
 
@@ -69,7 +78,7 @@ type CacheClient interface {
 	Ping(ctx context.Context) error
 }
 
-func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *llm.Client, cacheClient CacheClient) *Handler {
+func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *llm.Client, cacheClient CacheClient, streamMonitor StreamStatusProvider) *Handler {
 	var settingsManager SettingsManager
 	if sm, ok := manager.(SettingsManager); ok {
 		settingsManager = sm
@@ -82,6 +91,7 @@ func NewHandler(manager BotManager, store StoreInterface, hub *Hub, llmClient *l
 		hub:             hub,
 		llmClient:       llmClient,
 		cacheClient:     cacheClient,
+		streamMonitor:   streamMonitor,
 		envLookup:       os.Getenv,
 	}
 }
@@ -833,6 +843,41 @@ func (h *Handler) GetLLMStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, response)
+}
+
+// GetStreamStatus serves the public state of one monitored channel. Without a
+// channel query it reports the first configured one; it always answers 200 and
+// reports problems through the status Error field instead of failing.
+func (h *Handler) GetStreamStatus(w http.ResponseWriter, r *http.Request) {
+	if h.streamMonitor == nil {
+		respondJSON(w, map[string]interface{}{"configured": false})
+		return
+	}
+
+	channel := twitch.NormalizeChannel(r.URL.Query().Get("channel"))
+	if channel != "" {
+		configured := false
+		for _, ch := range h.streamMonitor.Channels() {
+			if ch == channel {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			respondError(w, "channel is not configured", http.StatusBadRequest)
+			return
+		}
+	}
+
+	exclude := make(map[string]struct{})
+	for _, bot := range h.manager.ListBots() {
+		login := strings.ToLower(strings.TrimSpace(bot.Config.TwitchLogin))
+		if login != "" {
+			exclude[login] = struct{}{}
+		}
+	}
+
+	respondJSON(w, h.streamMonitor.Snapshot(r.Context(), channel, exclude))
 }
 
 func (h *Handler) GetBotLogs(w http.ResponseWriter, r *http.Request) {

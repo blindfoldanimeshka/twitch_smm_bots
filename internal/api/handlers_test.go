@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/twitch"
 )
 
 // MockBotManager is a mock implementation of BotManager
@@ -229,10 +230,28 @@ func fixedEnv(values map[string]string) func(string) string {
 	return func(key string) string { return values[key] }
 }
 
+// FakeStreamStatusProvider is a stub StreamStatusProvider that records the
+// arguments every Snapshot call receives.
+type FakeStreamStatusProvider struct {
+	channels []string
+	status   twitch.StreamStatus
+
+	gotChannel string
+	gotExclude map[string]struct{}
+}
+
+func (f *FakeStreamStatusProvider) Channels() []string { return f.channels }
+
+func (f *FakeStreamStatusProvider) Snapshot(ctx context.Context, channel string, excludeLogins map[string]struct{}) twitch.StreamStatus {
+	f.gotChannel = channel
+	f.gotExclude = excludeLogins
+	return f.status
+}
+
 func TestHealthCheck(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -251,7 +270,7 @@ func TestListBots(t *testing.T) {
 	t.Run("returns empty list when no bots", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockManager.On("ListBots").Return([]BotInfo{})
 
@@ -271,7 +290,7 @@ func TestListBots(t *testing.T) {
 	t.Run("returns list of bots", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockBots := []BotInfo{
 			{
@@ -326,7 +345,7 @@ func TestGetSettings(t *testing.T) {
 	t.Run("successfully retrieves settings", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		expectedSettings := &storage.Settings{
 			ID:               "default",
@@ -368,7 +387,7 @@ func TestGetSettings(t *testing.T) {
 	t.Run("handles error when settings not found", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockStore.On("GetSettings", mock.Anything).Return(nil, assert.AnError)
 
@@ -385,7 +404,7 @@ func TestUpdateSettings(t *testing.T) {
 	t.Run("successfully updates settings", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		newSettings := storage.Settings{
 			ID:               "default",
@@ -428,7 +447,7 @@ func TestUpdateSettings(t *testing.T) {
 	t.Run("handles invalid JSON", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
 
@@ -445,7 +464,7 @@ func TestStartBot(t *testing.T) {
 	t.Run("successfully starts bot", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockManager.On("StartBot", mock.Anything, "bot1").Return(nil)
 
@@ -466,7 +485,7 @@ func TestStartBot(t *testing.T) {
 	t.Run("handles error when bot fails to start", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockManager.On("StartBot", mock.Anything, "bot2").Return(assert.AnError)
 
@@ -484,7 +503,7 @@ func TestStopBot(t *testing.T) {
 	t.Run("successfully stops bot", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)
-		handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		mockManager.On("StopBot", "bot1").Return(nil)
 
@@ -506,7 +525,7 @@ func TestStopBot(t *testing.T) {
 func TestGetSettingsMasksAPIKeyAndReportsSource(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.envLookup = fixedEnv(nil)
 
 	stored := &storage.Settings{
@@ -531,7 +550,7 @@ func TestGetSettingsMasksAPIKeyAndReportsSource(t *testing.T) {
 func TestGetSettingsReportsEnvKey(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.envLookup = fixedEnv(map[string]string{
 		"OPENROUTER_API_KEY": "sk-env",
 	})
@@ -559,7 +578,7 @@ func TestGetSettingsReportsEnvKey(t *testing.T) {
 func TestGetSettingsReportsPaidEnvOverride(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.envLookup = fixedEnv(map[string]string{
 		"LLM_PAID_ENABLED":       "true",
 		"LLM_PAID_DAILY_CAP_USD": "0.25",
@@ -588,7 +607,7 @@ func TestUpdateSettingsPreservesStoredKeyWhenEmpty(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
 	mockSettings := new(MockSettingsManager)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.settingsManager = mockSettings
 	handler.envLookup = fixedEnv(nil)
 
@@ -624,7 +643,7 @@ func TestUpdateSettingsUsesIncomingKeyWhenProvided(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
 	mockSettings := new(MockSettingsManager)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.settingsManager = mockSettings
 	handler.envLookup = fixedEnv(nil)
 
@@ -678,7 +697,7 @@ func TestGetLLMStatusIncludesGenerationFields(t *testing.T) {
 
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
-	handler := NewHandler(mockManager, mockStore, nil, client, nil)
+	handler := NewHandler(mockManager, mockStore, nil, client, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/llm/status", nil)
 	w := httptest.NewRecorder()
@@ -736,7 +755,7 @@ func TestUpdateSettingsFailsWhenOldSettingsUnavailable(t *testing.T) {
 	mockManager := new(MockBotManager)
 	mockStore := new(MockStore)
 	mockSettings := new(MockSettingsManager)
-	handler := NewHandler(mockManager, mockStore, nil, nil, nil)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 	handler.settingsManager = mockSettings
 	handler.envLookup = fixedEnv(nil)
 
@@ -765,4 +784,105 @@ func TestCalculateSettingsChangesHandlesNilOld(t *testing.T) {
 
 	assert.Contains(t, changes, "channels")
 	assert.Contains(t, changes, "llm_api_key")
+}
+
+func TestGetStreamStatusNoChannel(t *testing.T) {
+	provider := &FakeStreamStatusProvider{status: twitch.StreamStatus{Configured: false}}
+	mockManager := new(MockBotManager)
+	mockManager.On("ListBots").Return([]BotInfo{})
+	handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, provider)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/twitch/stream", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetStreamStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, false, body["configured"])
+}
+
+func TestGetStreamStatusNilMonitor(t *testing.T) {
+	handler := NewHandler(new(MockBotManager), new(MockStore), nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/twitch/stream", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetStreamStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, false, body["configured"])
+}
+
+func TestGetStreamStatusLive(t *testing.T) {
+	provider := &FakeStreamStatusProvider{status: twitch.StreamStatus{
+		Configured:     true,
+		Channel:        "a",
+		Live:           true,
+		Title:          "hello",
+		Game:           "Just Chatting",
+		UptimeSeconds:  120.5,
+		ViewersTotal:   100,
+		ActiveViewers:  2,
+		PassiveViewers: 98,
+		Chatters:       []twitch.Chatter{{Login: "alice"}},
+		Messages:       []twitch.ChatMessage{{Login: "alice", Text: "hi"}},
+	}}
+	mockManager := new(MockBotManager)
+	mockManager.On("ListBots").Return([]BotInfo{})
+	handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, provider)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/twitch/stream", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetStreamStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	for _, key := range []string{"uptime_seconds", "viewers_total", "active_viewers", "passive_viewers", "messages"} {
+		_, ok := body[key]
+		assert.True(t, ok, "missing key %q", key)
+	}
+	assert.Equal(t, 120.5, body["uptime_seconds"])
+	assert.Equal(t, 100.0, body["viewers_total"])
+	assert.Equal(t, 2.0, body["active_viewers"])
+	assert.Equal(t, 98.0, body["passive_viewers"])
+}
+
+func TestGetStreamStatusRejectsUnconfiguredChannel(t *testing.T) {
+	provider := &FakeStreamStatusProvider{channels: []string{"a"}}
+	handler := NewHandler(new(MockBotManager), new(MockStore), nil, nil, nil, provider)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/twitch/stream?channel=b", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetStreamStatus(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "channel is not configured")
+}
+
+func TestGetStreamStatusExcludesBots(t *testing.T) {
+	provider := &FakeStreamStatusProvider{channels: []string{"a"}}
+	mockManager := new(MockBotManager)
+	mockManager.On("ListBots").Return([]BotInfo{
+		{Config: storage.BotConfig{ID: "b1", TwitchLogin: "bot1"}, Running: true},
+	})
+	handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, provider)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/twitch/stream?channel=a", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetStreamStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "a", provider.gotChannel)
+	assert.Contains(t, provider.gotExclude, "bot1", "bot logins must be passed as the exclusion set")
 }
