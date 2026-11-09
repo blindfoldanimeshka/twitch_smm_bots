@@ -412,22 +412,29 @@ func TestUpdateSettings(t *testing.T) {
 		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		newSettings := storage.Settings{
-			ID:                 "default",
-			Channels:           []string{"https://www.twitch.tv/updated"},
-			DebugMode:          true,
-			DebugChannel:       "https://www.twitch.tv/debug",
-			PositivePrompt:     "updated prompt",
-			NegativePrompt:     "",
-			MaxTokens:          100,
-			AudioEnabled:       false,
-			RotationEnabled:    true,
-			RotationInterval:   120,
-			LLMProvider:        "openai",
-			LLMApiURL:          "https://api.openai.com/v1",
-			LLMModel:           "gpt-4",
-			LLMApiKey:          "sk-test",
-			TwitchClientID:     "new-client-id",
-			TwitchClientSecret: "new-secret",
+			ID:                         "default",
+			Channels:                   []string{"https://www.twitch.tv/updated"},
+			DebugMode:                  true,
+			DebugChannel:               "https://www.twitch.tv/debug",
+			PositivePrompt:             "updated prompt",
+			NegativePrompt:             "",
+			MaxTokens:                  100,
+			AudioEnabled:               false,
+			RotationEnabled:            true,
+			RotationInterval:           120,
+			PresenceEnabled:            true,
+			PresenceSessionMinMinutes:  20,
+			PresenceSessionMaxMinutes:  40,
+			PresenceCooldownMinMinutes: 10,
+			PresenceCooldownMaxMinutes: 20,
+			PresenceGreetingEnabled:    true,
+			PresenceFarewellEnabled:    true,
+			LLMProvider:                "openai",
+			LLMApiURL:                  "https://api.openai.com/v1",
+			LLMModel:                   "gpt-4",
+			LLMApiKey:                  "sk-test",
+			TwitchClientID:             "new-client-id",
+			TwitchClientSecret:         "new-secret",
 		}
 
 		oldSettings := &storage.Settings{
@@ -632,7 +639,13 @@ func TestUpdateSettingsPreservesStoredKeyWhenEmpty(t *testing.T) {
 		return s.LLMApiKey == "sk-db"
 	})).Return(nil)
 
-	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": ""})
+	body, _ := json.Marshal(map[string]interface{}{
+		"llm_api_key":                   "",
+		"presence_session_min_minutes":  20,
+		"presence_session_max_minutes":  40,
+		"presence_cooldown_min_minutes": 10,
+		"presence_cooldown_max_minutes": 20,
+	})
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -668,7 +681,13 @@ func TestUpdateSettingsUsesIncomingKeyWhenProvided(t *testing.T) {
 		return s.LLMApiKey == "sk-new"
 	})).Return(nil)
 
-	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": "sk-new"})
+	body, _ := json.Marshal(map[string]interface{}{
+		"llm_api_key":                   "sk-new",
+		"presence_session_min_minutes":  20,
+		"presence_session_max_minutes":  40,
+		"presence_cooldown_min_minutes": 10,
+		"presence_cooldown_max_minutes": 20,
+	})
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -767,7 +786,13 @@ func TestUpdateSettingsFailsWhenOldSettingsUnavailable(t *testing.T) {
 	mockStore.On("GetSettings", mock.Anything).Return(nil, assert.AnError)
 	mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
 
-	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": ""})
+	body, _ := json.Marshal(map[string]interface{}{
+		"llm_api_key":                   "",
+		"presence_session_min_minutes":  20,
+		"presence_session_max_minutes":  40,
+		"presence_cooldown_min_minutes": 10,
+		"presence_cooldown_max_minutes": 20,
+	})
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -982,6 +1007,30 @@ func TestUpdateSettingsRejectsInvalidPresenceRange(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "presence ranges must satisfy 1 <= min <= max <= 240")
+	mockStore.AssertNotCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
+	mockSettings.AssertNotCalled(t, "ApplySettings", mock.Anything, mock.Anything)
+}
+
+func TestUpdateSettingsRejectsAllZeroPresence(t *testing.T) {
+	mockManager := new(MockBotManager)
+	mockStore := new(MockStore)
+	mockSettings := new(MockSettingsManager)
+	handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+	handler.settingsManager = mockSettings
+
+	// The DB carries valid presence defaults, so a real GET->POST round-trip
+	// always sends ranges; an all-zero payload is invalid and must be
+	// rejected before any store read/write or runtime apply.
+	body, _ := json.Marshal(map[string]interface{}{"llm_api_key": ""})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.UpdateSettings(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// http.Error appends a trailing newline to the exact constraint body.
+	assert.Equal(t, "{\"error\":\"presence ranges must satisfy 1 <= min <= max <= 240\"}\n", w.Body.String())
+	mockStore.AssertNotCalled(t, "GetSettings", mock.Anything)
 	mockStore.AssertNotCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
 	mockSettings.AssertNotCalled(t, "ApplySettings", mock.Anything, mock.Anything)
 }

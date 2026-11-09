@@ -567,17 +567,13 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(settings)
 }
 
-// presenceRangesValid reports whether the presence ranges in settings may be
-// stored. An all-zero payload means the client did not send presence values
-// (the runtime then uses its defaults) and is accepted unchanged; any
-// supplied range must satisfy 1 <= min <= max <= 240.
+// presenceRangesValid reports whether the presence ranges in settings satisfy
+// 1 <= min <= max <= 240 for both the session and the cooldown pair. Zeros
+// are invalid: the database carries valid defaults (20/40/10/20), so a real
+// GET->POST round-trip always sends ranges.
 func presenceRangesValid(s *storage.Settings) bool {
 	sessionMin, sessionMax := s.PresenceSessionMinMinutes, s.PresenceSessionMaxMinutes
 	cooldownMin, cooldownMax := s.PresenceCooldownMinMinutes, s.PresenceCooldownMaxMinutes
-
-	if sessionMin == 0 && sessionMax == 0 && cooldownMin == 0 && cooldownMax == 0 {
-		return true
-	}
 
 	return sessionMin >= 1 && sessionMin <= sessionMax && sessionMax <= 240 &&
 		cooldownMin >= 1 && cooldownMin <= cooldownMax && cooldownMax <= 240
@@ -591,10 +587,10 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Presence ranges must be sane before anything is written or applied.
-	// A payload without any presence values (all zero) means "not provided"
-	// and keeps the stored/default configuration; any supplied range must
-	// satisfy 1 <= min <= max <= 240.
+	// Presence ranges must be sane before anything is read, written or
+	// applied: both pairs must satisfy 1 <= min <= max <= 240. Zeros are
+	// rejected — the database carries valid defaults, so a real round-trip
+	// always sends ranges.
 	if !presenceRangesValid(&settings) {
 		http.Error(w, `{"error":"presence ranges must satisfy 1 <= min <= max <= 240"}`, http.StatusBadRequest)
 		return
