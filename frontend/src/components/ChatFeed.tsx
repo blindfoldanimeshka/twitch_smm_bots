@@ -14,9 +14,15 @@ export interface ChatPresenceEvent {
 interface ChatFeedProps {
   messages: ChatMessage[]
   events?: ChatPresenceEvent[]
-  /** The message request is in flight and nothing has been delivered yet. */
+  /**
+   * The message request is in flight. Rendered only while the feed has nothing
+   * to show, so presence events are never replaced by a loading hint.
+   */
   loading?: boolean
-  /** The message request failed: the feed must say so, not look silently empty. */
+  /**
+   * The message request failed. Same basis as `loading`: it speaks only when
+   * the feed is otherwise blank, never over already visible content.
+   */
   error?: boolean
   /** Retriggers the failed message request. */
   onRetry?: () => void
@@ -150,7 +156,7 @@ export function ChatFeed({
       <AsyncState
         loading={loading && items.length === 0}
         loadingText="Загружаем чат…"
-        error={error && messages.length === 0}
+        error={error && items.length === 0}
         errorText="Не удалось получить сообщения чата."
         onRetry={onRetry}
       >

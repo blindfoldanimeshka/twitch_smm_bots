@@ -124,6 +124,9 @@ export default function Dashboard() {
   const mutationError = startBot.error ?? stopBot.error ?? startAll.error ?? stopAll.error
 
   const viewersKnown = streamStatus?.live === true && !streamStatus.error
+  // Until settings really resolved, an empty channel list means nothing: it is
+  // either still loading or it failed. Nothing here may claim "Канал не задан".
+  const settingsPending = settingsLoading || settingsLoadFailed
 
   return (
     <>
@@ -132,7 +135,7 @@ export default function Dashboard() {
       <div style={{ display: 'grid', gap: 16 }}>
         {/* A missing channel is a calm hint, but only once settings really
             loaded without an error: a failed request must not look like "no
-            channel configured". */}
+            channel configured". The same flag gates the stream card below. */}
         <AsyncState
           loading={settingsLoading}
           loadingText="Загружаем настройки…"
@@ -182,18 +185,41 @@ export default function Dashboard() {
             title="Зрителей сейчас"
             value={viewersKnown ? streamStatus.viewers_total : '—'}
             icon={Users}
-            hint={streamLoadFailed ? 'нет данных' : channel ? `Канал ${channel}` : 'Канал не задан'}
+            hint={
+              settingsPending || streamLoadFailed
+                ? 'нет данных'
+                : channel
+                  ? `Канал ${channel}`
+                  : 'Канал не задан'
+            }
           />
         </div>
 
-        <StreamCard
-          status={streamStatus}
-          channel={channel}
-          compact
-          isLoading={streamLoading}
-          isError={streamLoadFailed}
-          onRetry={() => refetchStream()}
-        />
+        {/* The card cannot tell a failed settings request from an unconfigured
+            channel: with settings unresolved its channel prop is empty by
+            definition, so it would advertise «Канал не задан» as a setup hint.
+            Show the honest state in its place and render the card as soon as
+            settings resolve. */}
+        {settingsPending ? (
+          <Card title="Трансляция">
+            <AsyncState
+              loading={settingsLoading}
+              loadingText="Загружаем настройки…"
+              error={settingsLoadFailed}
+              errorText="Не удалось получить данные канала — трансляция недоступна."
+              onRetry={() => refetchSettings()}
+            />
+          </Card>
+        ) : (
+          <StreamCard
+            status={streamStatus}
+            channel={channel}
+            compact
+            isLoading={streamLoading}
+            isError={streamLoadFailed}
+            onRetry={() => refetchStream()}
+          />
+        )}
 
         <Card
           title="Активные боты"
