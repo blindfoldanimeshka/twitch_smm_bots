@@ -47,8 +47,8 @@ export default function Stream() {
     refetch: refetchStatus,
   } = useStreamStatus(channel || undefined, channel !== '')
 
-  // Presence events arrive over the shared WebSocket (the same singleton the
-  // log store listens to); this page only adds a subscriber, no new socket.
+  // Presence events arrive over the shared WebSocket singleton; this page only
+  // adds a subscriber, no new socket.
   const [presenceEvents, setPresenceEvents] = useState<ChatPresenceEvent[]>([])
   useWebSocketSubscription(
     useCallback((msg: WSMessage) => {
@@ -71,6 +71,10 @@ export default function Stream() {
     }, []),
   )
 
+  // The backend answered, but Twitch itself failed: chat data is absent, the
+  // chat is not. Nothing may claim "nobody wrote" while this flag is set.
+  const gqlOutage = Boolean(status?.error)
+
   return (
     <>
       <PageHeader
@@ -89,11 +93,12 @@ export default function Stream() {
         }
       />
 
-      {/* Settings failed to load: an error with retry, not "channel is missing". */}
+      {/* The first settings load failed: an error with retry, not "channel is
+          missing". Settings kept from a failed background poll stay on screen. */}
       <AsyncState
-        loading={settingsLoading}
+        loading={settingsLoading && !settings}
         loadingText="Загружаем настройки…"
-        error={settingsFailed}
+        error={settingsFailed && !settings}
         errorText="Не удалось загрузить настройки — список каналов недоступен."
         onRetry={() => refetchSettings()}
       >
@@ -120,28 +125,34 @@ export default function Stream() {
                 error={statusFailed}
                 errorText="Не удалось получить список активных чаттеров."
                 onRetry={() => refetchStatus()}
-                isEmpty={(status?.chatters.length ?? 0) === 0}
+                isEmpty={!gqlOutage && (status?.chatters.length ?? 0) === 0}
                 emptyTitle="Пока никто не писал"
               >
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {status?.chatters.slice(0, 10).map((chatter) => (
-                    <span
-                      key={chatter.login}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'baseline',
-                        gap: 6,
-                        padding: '4px 12px',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-pill)',
-                        fontSize: 13,
-                      }}
-                    >
-                      <strong>@{chatter.login}</strong>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>{formatTime(chatter.last_message_at)}</span>
-                    </span>
-                  ))}
-                </div>
+                {gqlOutage && (status?.chatters.length ?? 0) === 0 ? (
+                  <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>
+                    Twitch не отвечает — данных чата нет
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {status?.chatters.slice(0, 10).map((chatter) => (
+                      <span
+                        key={chatter.login}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'baseline',
+                          gap: 6,
+                          padding: '4px 12px',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-pill)',
+                          fontSize: 13,
+                        }}
+                      >
+                        <strong>@{chatter.login}</strong>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{formatTime(chatter.last_message_at)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </AsyncState>
             </Card>
             <Card title="Чат" subtitle={`Последние 50 сообщений канала ${channel} и события присутствия ботов`}>
@@ -151,6 +162,7 @@ export default function Stream() {
                 loading={statusLoading}
                 error={statusFailed}
                 onRetry={() => refetchStatus()}
+                isEmpty={!gqlOutage && (status?.messages.length ?? 0) === 0}
               />
             </Card>
           </div>

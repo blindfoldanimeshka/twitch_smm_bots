@@ -124,22 +124,26 @@ export default function Dashboard() {
   const mutationError = startBot.error ?? stopBot.error ?? startAll.error ?? stopAll.error
 
   const viewersKnown = streamStatus?.live === true && !streamStatus.error
-  // Until settings really resolved, an empty channel list means nothing: it is
-  // either still loading or it failed. Nothing here may claim "Канал не задан".
-  const settingsPending = settingsLoading || settingsLoadFailed
+  // Pending only while there is no settings data at all. A failed background
+  // poll keeps the last good settings on screen instead of unmounting fully
+  // rendered cards; only a first load without data gates them. Until data
+  // resolves, an empty channel list means nothing: it is either still loading
+  // or it failed, so nothing here may claim "Канал не задан".
+  const settingsPending = !settings && (settingsLoading || settingsLoadFailed)
 
   return (
     <>
       <PageHeader title="Дашборд" description="Сводка по ботам и текущая трансляция" />
 
       <div style={{ display: 'grid', gap: 16 }}>
-        {/* A missing channel is a calm hint, but only once settings really
-            loaded without an error: a failed request must not look like "no
-            channel configured". The same flag gates the stream card below. */}
+        {/* A missing channel is a calm hint, but only once settings data
+            actually exists: a first failed request must not look like "no
+            channel configured", and a failed background poll over stale-but-
+            good settings must not hide the banner either. */}
         <AsyncState
-          loading={settingsLoading}
+          loading={settingsLoading && !settings}
           loadingText="Загружаем настройки…"
-          error={settingsLoadFailed}
+          error={settingsLoadFailed && !settings}
           errorText="Не удалось загрузить настройки — данные канала могли измениться."
           onRetry={() => refetchSettings()}
         >
@@ -195,11 +199,11 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* The card cannot tell a failed settings request from an unconfigured
-            channel: with settings unresolved its channel prop is empty by
+        {/* Without any settings data the card cannot tell a failed request
+            from an unconfigured channel: its channel prop would be empty by
             definition, so it would advertise «Канал не задан» as a setup hint.
-            Show the honest state in its place and render the card as soon as
-            settings resolve. */}
+            Show the honest state until data exists — settings kept from a
+            failed background poll still render the card. */}
         {settingsPending ? (
           <Card title="Трансляция">
             <AsyncState

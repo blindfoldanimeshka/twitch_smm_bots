@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { config } from '../config'
+import { api, isResponseError } from '../api/client'
 import { useWebSocketStatus, useWebSocketSubscription } from '../hooks/useWebSocket'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Modal'
@@ -45,22 +45,14 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
     setTestingLLM(true)
     setLlmResult('')
     try {
-      const response = await fetch(`${config.apiUrl}/api/settings/test-llm`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': config.apiKey,
-        },
-        body: JSON.stringify({ personality: 'нейтрал' }),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setLlmResult(data.message || 'Нет ответа')
-      } else {
-        setLlmResult('Ошибка генерации')
-      }
-    } catch {
-      setLlmResult('Ошибка подключения к API')
+      // Routed through the shared axios client: baseURL and X-API-Key come
+      // from its configuration, no manual fetch here.
+      const { data } = await api.testLLM('нейтрал')
+      setLlmResult(data.message || 'Нет ответа')
+    } catch (error) {
+      // Same two outcomes as before: the backend answered with an error
+      // status (generation failed) vs. we never got through.
+      setLlmResult(isResponseError(error) ? 'Ошибка генерации' : 'Ошибка подключения к API')
     } finally {
       setTestingLLM(false)
     }

@@ -26,6 +26,12 @@ interface ChatFeedProps {
   error?: boolean
   /** Retriggers the failed message request. */
   onRetry?: () => void
+  /**
+   * Whether an empty feed may honestly claim "no messages yet". Defaults to
+   * `messages.length === 0`; pass `false` during a backend-reported Twitch
+   * outage, where absent messages mean absent data, not an empty chat.
+   */
+  isEmpty?: boolean
   /** Visible height of the feed in pixels. */
   height?: number
   className?: string
@@ -105,6 +111,7 @@ export function ChatFeed({
   loading = false,
   error = false,
   onRetry,
+  isEmpty = messages.length === 0,
   height = 440,
   className,
 }: ChatFeedProps) {
@@ -160,7 +167,7 @@ export function ChatFeed({
         errorText="Не удалось получить сообщения чата."
         onRetry={onRetry}
       >
-        {items.length === 0 && (
+        {isEmpty && items.length === 0 && (
           <p style={{ margin: 0, textAlign: 'center', fontSize: 13, color: 'var(--muted)' }}>
             Сообщений пока нет — лента наполнится, когда в чате появятся сообщения
           </p>

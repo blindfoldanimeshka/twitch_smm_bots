@@ -250,19 +250,18 @@ export default function Settings() {
     mutationFn: (data: SettingsType) => api.updateSettings(data),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      // What we just saved is now the server truth: rebase the baseline onto
-      // it and align the form with what the server actually stored —
-      // trim/drop empty channels, the clamped token limit, and a now-saved
-      // API key (cleared from the input) — so `dirty` clears and background
-      // sync works again.
+      // What we just sent is now the server truth: rebase the baseline onto
+      // its normalized shape (trim/drop empty channels, clamped token limit)
+      // so `dirty` clears and background sync works again. The form was
+      // already aligned with the payload in handleSave, so nothing is
+      // overwritten here except the now-saved API key — and only when the
+      // user has not edited it since the click. Edits made mid-flight stay.
       const normalized = normalizeSettings(variables)
       const savedMaxTokens = clampMaxTokensValue(normalized.max_tokens)
       setBaseline({ ...normalized, max_tokens: savedMaxTokens })
       setFormState((prev) => ({
         ...prev,
-        channels: normalized.channels,
-        max_tokens: savedMaxTokens,
-        llm_api_key: '',
+        llm_api_key: prev.llm_api_key === variables.llm_api_key ? '' : prev.llm_api_key,
       }))
       setSaveError(null)
       setSaveSuccess(true)
@@ -331,14 +330,18 @@ export default function Settings() {
     setSaveSuccess(false)
     setSaveError(null)
     const channels = formState.channels.map((c) => c.trim()).filter((c) => c !== '')
-    updateSettingsMutation.mutate({
+    const payload: SettingsType = {
       ...formState,
       channels,
       // Final clamp: a half-typed value that never got blurred still must
       // not reach the backend outside 20..200.
       max_tokens: clampMaxTokensValue(formState.max_tokens),
       updated_at: new Date().toISOString(),
-    })
+    }
+    // The form must show exactly what was sent: onSuccess then only rebases
+    // the baseline, and anything typed after this click stays untouched.
+    setFormState(payload)
+    updateSettingsMutation.mutate(payload)
   }
 
   // All hooks run unconditionally above; everything below may return early.

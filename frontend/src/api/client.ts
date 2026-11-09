@@ -170,6 +170,13 @@ export function getErrorMessage(error: unknown): string {
   return 'Неизвестная ошибка';
 }
 
+// True when the server answered with a non-2xx status, as opposed to a
+// network-level failure. Lets callers keep distinct user messages without
+// importing axios themselves.
+export function isResponseError(error: unknown): boolean {
+  return axios.isAxiosError(error) && Boolean(error.response);
+}
+
 export const api = {
   // Bots
   getBots: () => client.get<Bot[]>('/api/bots'),
@@ -194,6 +201,9 @@ export const api = {
   // Settings
   getSettings: () => client.get<Settings>('/api/settings'),
   updateSettings: (data: Settings) => client.post('/api/settings', data),
+  // One-shot LLM generation test (used by the audio-test modal).
+  testLLM: (personality: string) =>
+    client.post<{ message?: string; status?: string }>('/api/settings/test-llm', { personality }),
 
   // LLM Status
   getLLMStatus: () => client.get<LLMStatus>('/api/llm/status'),
