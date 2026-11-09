@@ -76,6 +76,8 @@
     "POST /api/settings replaces the whole settings row",
     "rotation_* DB columns stay for compatibility but are unused after this plan",
     "Public Twitch GQL is unofficial and must degrade gracefully",
-    "Presence simulation must not affect viewer_count"
+    "Presence simulation must not affect viewer_count",
+    "Storage tests are integration tests: they need Postgres; without it part of them fails on connect instead of skipping",
+    "pongReply must answer both PING :payload and PING payload with a well-formed PONG :payload; this invariant covers ChatMonitor (the anonymous reader) only, the bot IRCClient (internal/twitch/irc.go) has its own inline PING handler not covered by pongReply"
   ]
 }

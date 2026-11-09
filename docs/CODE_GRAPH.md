@@ -227,11 +227,18 @@ GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удалены.
 12. **Присутствие не накручивает зрителей.** Только IRC + сообщения.
 13. **Тесты storage интеграционные.** Нужен Postgres; без него часть тестов
     падает на connect, а не skip.
+14. **`pongReply` — инвариант `ChatMonitor`.** Анонимный читатель
+    (`internal/twitch/chat_monitor.go`) обязан отвечать well-formed
+    `PONG :<payload>` на обе формы: `PING :payload` и `PING payload`.
+    Инвариант касается только `ChatMonitor`: ботовый клиент `IRCClient`
+    (`internal/twitch/irc.go:264-271`) имеет собственный inline-обработчик
+    PING, и `pongReply` его не покрывает.
 
 ## 9. Команды
 
 ```bash
 go build ./...
+go vet ./...
 go test ./...
 cd frontend && npm.cmd run build
 docker compose up -d --build --wait

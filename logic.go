@@ -1097,10 +1097,12 @@ func (bm *botManager) statusLines() []string {
 }
 
 func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
-	// Capture this run's stop channel: startBot creates a fresh channel per
-	// start, so closing the captured value can never double-close the channel
-	// of a newer run that started after this loop timed out.
+	// Capture this run's stop channel and client: startBot creates a fresh
+	// channel and a fresh client per start, so a loop that outlives its run
+	// (e.g. stopBot timed out and the bot was restarted) must never send on,
+	// close, or otherwise touch the client of a newer run.
 	stopped := br.stopped
+	client := br.client
 
 	slog.Info("bot started", "bot_id", br.cfg.ID)
 	bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot started", nil)
@@ -1151,11 +1153,11 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		}
 
 		// Проверка и переподключение IRC если нужно
-		if !br.client.IsConnected() {
+		if !client.IsConnected() {
 			slog.Warn("IRC disconnected, reconnecting...", "bot_id", br.cfg.ID)
 			bm.logBotEvent(br.cfg.ID, "error", "warning", "IRC disconnected, reconnecting...", nil)
 
-			if err := br.client.Reconnect(); err != nil {
+			if err := client.Reconnect(); err != nil {
 				slog.Error("reconnect failed", "bot_id", br.cfg.ID, "error", err)
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
@@ -1258,11 +1260,18 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		}
 
 		// P0-2: Check and wait for rate limits before sending
-		br.client.WaitForRateLimit()
+		client.WaitForRateLimit()
+
+		// WaitForRateLimit does not hold the client lock, so this loop may
+		// have been cancelled while it slept: stopBot may have returned and
+		// a newer run may already own br. Never send or mutate after that.
+		if ctx.Err() != nil {
+			return
+		}
 
 		// В режиме отладки не отправляем сообщения в реальный чат
 		if !bm.debugMode {
-			if err := br.client.SendMessage(msg); err != nil {
+			if err := client.SendMessage(msg); err != nil {
 				slog.Error("twitch send error", "bot_id", br.cfg.ID, "error", err)
 
 				// P0-2: Check if rate limited
@@ -1270,15 +1279,25 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 					bm.logBotEvent(br.cfg.ID, "rate_limit", "warning", "Twitch rate limit reached", map[string]interface{}{
 						"error": err.Error(),
 					})
-					// Don't count rate limit as error, just wait and continue
-					time.Sleep(5 * time.Second)
+					// Don't count rate limit as error, just wait and continue.
+					// The wait must not outlive this run.
+					select {
+					case <-time.After(5 * time.Second):
+					case <-ctx.Done():
+						return
+					}
 					continue
 				}
 
-				br.client.Close()
+				client.Close()
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					slog.Error("too many send errors, stopping bot", "bot_id", br.cfg.ID)
+					// If this run was cancelled while failing, a newer run may
+					// own br already: never flag it as errored.
+					if ctx.Err() != nil {
+						return
+					}
 					bm.markBotError(br)
 					return
 				}

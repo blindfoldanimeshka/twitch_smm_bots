@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"twitch-smm-bot/internal/audio"
+	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 )
 
@@ -22,6 +25,10 @@ type fakeTwitchClient struct {
 
 	polledOnce sync.Once
 	polled     chan struct{} // closed on the first IsConnected call (loop is running)
+
+	// onWait, when set, is invoked at the start of WaitForRateLimit. It lets
+	// tests simulate events landing while the bot loop sleeps in the wait.
+	onWait func()
 }
 
 func newFakeTwitchClient() *fakeTwitchClient {
@@ -62,7 +69,11 @@ func (f *fakeTwitchClient) Close() {
 	f.connected = false
 }
 
-func (f *fakeTwitchClient) WaitForRateLimit() {}
+func (f *fakeTwitchClient) WaitForRateLimit() {
+	if f.onWait != nil {
+		f.onWait()
+	}
+}
 
 // SentMessages returns a copy of the messages recorded by the fake client.
 func (f *fakeTwitchClient) SentMessages() []string {
@@ -144,4 +155,55 @@ func TestStopBotDoesNotWaitForNeverStartedLoop(t *testing.T) {
 	start := time.Now()
 	require.NoError(t, bm.stopBot("bot-1", false))
 	require.Less(t, time.Since(start), 500*time.Millisecond, "stopBot waited for a loop that never started")
+}
+
+// TestStaleLoopDoesNotSendAfterCancelDuringWait pins the stale-loop window:
+// WaitForRateLimit runs without the client lock, so the loop's context can be
+// cancelled (and stopBot return, and a newer run start) while the wait is
+// sleeping. Once the wait returns, the loop must notice and exit instead of
+// sending through the client it captured for this run.
+func TestStaleLoopDoesNotSendAfterCancelDuringWait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/key":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"usage_daily":0,"free_model_daily_requests":{"limit":50,"remaining":50,"used":0}}}`))
+		case "/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"model":"openrouter/free","choices":[{"message":{"content":"hello from llm"}}],"usage":{"cost":0}}`))
+		default:
+			t.Errorf("unexpected llm path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	llmClient := llm.NewClient(llm.Config{BaseURL: srv.URL, APIKey: "sk-test", FreeModel: "openrouter/free"})
+
+	bm := newBotManager(nil, llmClient, nil, nil, context.Background(), "testchannel", 0, audio.Config{}, false, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fake := newFakeTwitchClient()
+	// The cancellation lands exactly while the loop is inside
+	// WaitForRateLimit: the window the loop used to be blind to.
+	fake.onWait = cancel
+
+	br := &botRuntime{
+		cfg: storage.BotConfig{
+			ID:             "bot-1",
+			TwitchLogin:    "testlogin",
+			Enabled:        true,
+			MinDelaySec:    1,
+			MaxDelaySec:    1,
+			CurrentChannel: "testchannel",
+		},
+		client: fake,
+	}
+
+	// Run the loop in the current goroutine so the test observes runBotLoop
+	// returning after the cancellation.
+	bm.runBotLoop(ctx, br)
+
+	assert.Empty(t, fake.SentMessages(), "loop sent through its client after the run was cancelled during the rate-limit wait")
 }
