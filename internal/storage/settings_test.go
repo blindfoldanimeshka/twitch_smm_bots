@@ -1,149 +1,126 @@
 package storage
 
 import (
+	"context"
 	"testing"
-	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetSettings(t *testing.T) {
-	db, mock, err := sqlmock.New()
+const settingsTestDSN = "postgres://botfarm:botfarm@localhost:5432/botfarm?sslmode=disable"
+
+// newSettingsStore connects to the real Postgres, mirroring settings_migration_test.go.
+// sqlmock cannot intercept pgxpool, so the settings store is only exercised against a live database.
+func newSettingsStore(t *testing.T) *Store {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, settingsTestDSN)
+	if err != nil {
+		t.Skipf("postgres not available: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := pool.Ping(ctx); err != nil {
+		t.Skipf("postgres not available: %v", err)
+	}
+
+	return &Store{pool: pool}
+}
+
+func TestSettingsRoundTrip(t *testing.T) {
+	store := newSettingsStore(t)
+	ctx := context.Background()
+	require.NoError(t, store.EnsureSettingsTable(ctx))
+
+	original, err := store.GetSettings(ctx)
 	require.NoError(t, err)
-	defer db.Close()
+	require.Equal(t, "default", original.ID)
 
-	// Mock pgxpool (simplified - in real tests use testcontainers)
-	// For now, test the logic structure
-
-	t.Run("successfully retrieves settings", func(t *testing.T) {
-		expectedSettings := &Settings{
-			ID:               "default",
-			Channels:         []string{"https://www.twitch.tv/test"},
-			DebugMode:        false,
-			DebugChannel:     "",
-			PositivePrompt:   "test prompt",
-			NegativePrompt:   "",
-			MaxTokens:        60,
-			AudioEnabled:     true,
-			RotationEnabled:  false,
-			RotationInterval: 60,
-			LLMProvider:      "openrouter",
-			LLMApiURL:        "https://openrouter.ai/api/v1",
-			LLMModel:         "test-model",
-			LLMApiKey:        "",
-			TwitchClientID:     "test-client-id",
-			TwitchClientSecret: "test-secret",
-			UpdatedAt:        time.Now(),
-		}
-
-		rows := sqlmock.NewRows([]string{
-			"id", "channels", "debug_mode", "debug_channel", "positive_prompt",
-			"negative_prompt", "max_tokens", "audio_enabled", "rotation_enabled",
-			"rotation_interval", "llm_provider", "llm_api_url", "llm_model",
-			"llm_api_key", "twitch_client_id", "twitch_client_secret", "updated_at",
-		}).AddRow(
-			expectedSettings.ID,
-			`["https://www.twitch.tv/test"]`,
-			expectedSettings.DebugMode,
-			expectedSettings.DebugChannel,
-			expectedSettings.PositivePrompt,
-			expectedSettings.NegativePrompt,
-			expectedSettings.MaxTokens,
-			expectedSettings.AudioEnabled,
-			expectedSettings.RotationEnabled,
-			expectedSettings.RotationInterval,
-			expectedSettings.LLMProvider,
-			expectedSettings.LLMApiURL,
-			expectedSettings.LLMModel,
-			expectedSettings.LLMApiKey,
-			expectedSettings.TwitchClientID,
-			expectedSettings.TwitchClientSecret,
-			expectedSettings.UpdatedAt,
-		)
-
-		mock.ExpectQuery("SELECT (.+) FROM settings WHERE id = 'default'").
-			WillReturnRows(rows)
-
-		// Note: This is a structure test. Full integration test would use testcontainers
-		assert.NotNil(t, expectedSettings)
-		assert.Equal(t, "default", expectedSettings.ID)
-		assert.Equal(t, "openrouter", expectedSettings.LLMProvider)
-		assert.Equal(t, "test-client-id", expectedSettings.TwitchClientID)
+	// The settings row is global state: put it back exactly as we found it.
+	t.Cleanup(func() {
+		require.NoError(t, store.UpdateSettings(ctx, original))
 	})
 
-	t.Run("handles missing settings", func(t *testing.T) {
-		mock.ExpectQuery("SELECT (.+) FROM settings WHERE id = 'default'").
-			WillReturnError(sqlmock.ErrCancelled)
+	updated := *original
+	updated.PresenceEnabled = !original.PresenceEnabled
+	updated.PresenceSessionMinMinutes = original.PresenceSessionMinMinutes + 7
+	updated.PresenceSessionMaxMinutes = original.PresenceSessionMaxMinutes + 13
+	updated.TwitchClientID = "roundtrip-client-id"
+	updated.TwitchClientSecret = "roundtrip-client-secret"
+	updated.LLMApiKey = "roundtrip-llm-api-key"
+	// Computed flags, never persisted: they must not change what GetSettings returns.
+	updated.TwitchClientSecretSet = true
 
-		// Test error handling structure
-		assert.Error(t, sqlmock.ErrCancelled)
-	})
+	require.NoError(t, store.UpdateSettings(ctx, &updated))
+
+	got, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, updated.PresenceEnabled, got.PresenceEnabled)
+	assert.NotEqual(t, original.PresenceEnabled, got.PresenceEnabled)
+	assert.Equal(t, updated.PresenceSessionMinMinutes, got.PresenceSessionMinMinutes)
+	assert.Equal(t, updated.PresenceSessionMaxMinutes, got.PresenceSessionMaxMinutes)
+	assert.Equal(t, "roundtrip-client-id", got.TwitchClientID)
+	assert.Equal(t, "roundtrip-client-secret", got.TwitchClientSecret)
+	assert.Equal(t, "roundtrip-llm-api-key", got.LLMApiKey)
+	assert.False(t, got.TwitchClientSecretSet, "TwitchClientSecretSet is computed in the API, it must not be stored")
+
+	// Untouched columns must survive the write unchanged: GetSettings really reads the row back.
+	assert.Equal(t, original.ID, got.ID)
+	assert.Equal(t, original.Channels, got.Channels)
+	assert.Equal(t, original.DebugMode, got.DebugMode)
+	assert.Equal(t, original.DebugChannel, got.DebugChannel)
+	assert.Equal(t, original.PositivePrompt, got.PositivePrompt)
+	assert.Equal(t, original.NegativePrompt, got.NegativePrompt)
+	assert.Equal(t, original.MaxTokens, got.MaxTokens)
+	assert.Equal(t, original.AudioEnabled, got.AudioEnabled)
+	assert.Equal(t, original.RotationEnabled, got.RotationEnabled)
+	assert.Equal(t, original.RotationInterval, got.RotationInterval)
+	assert.Equal(t, original.PresenceCooldownMinMinutes, got.PresenceCooldownMinMinutes)
+	assert.Equal(t, original.PresenceCooldownMaxMinutes, got.PresenceCooldownMaxMinutes)
+	assert.Equal(t, original.PresenceGreetingEnabled, got.PresenceGreetingEnabled)
+	assert.Equal(t, original.PresenceFarewellEnabled, got.PresenceFarewellEnabled)
+	assert.Equal(t, original.LLMProvider, got.LLMProvider)
+	assert.Equal(t, original.LLMApiURL, got.LLMApiURL)
+	assert.Equal(t, original.LLMModel, got.LLMModel)
+	assert.Equal(t, original.LLMPaidModel, got.LLMPaidModel)
+	assert.Equal(t, original.LLMPaidEnabled, got.LLMPaidEnabled)
+	assert.Equal(t, original.LLMPaidDailyCapUSD, got.LLMPaidDailyCapUSD)
+
+	assert.False(t, got.UpdatedAt.Before(updated.UpdatedAt), "UpdateSettings should stamp updated_at with the DB clock")
 }
 
-func TestUpdateSettings(t *testing.T) {
-	t.Run("successfully updates settings", func(t *testing.T) {
-		settings := &Settings{
-			ID:               "default",
-			Channels:         []string{"https://www.twitch.tv/updated"},
-			DebugMode:        true,
-			DebugChannel:     "https://www.twitch.tv/debug",
-			PositivePrompt:   "updated prompt",
-			NegativePrompt:   "negative",
-			MaxTokens:        100,
-			AudioEnabled:     false,
-			RotationEnabled:  true,
-			RotationInterval: 120,
-			LLMProvider:      "openai",
-			LLMApiURL:        "https://api.openai.com/v1",
-			LLMModel:         "gpt-4",
-			LLMApiKey:        "sk-test",
-			TwitchClientID:     "new-client-id",
-			TwitchClientSecret: "new-secret",
-		}
+func TestUpdateSettingsMissingRowDoesNotPanic(t *testing.T) {
+	store := newSettingsStore(t)
+	ctx := context.Background()
+	require.NoError(t, store.EnsureSettingsTable(ctx))
 
-		// Validate settings structure
-		assert.Equal(t, "default", settings.ID)
-		assert.True(t, settings.DebugMode)
-		assert.Equal(t, "openai", settings.LLMProvider)
-		assert.Equal(t, 100, settings.MaxTokens)
-		assert.Equal(t, "new-client-id", settings.TwitchClientID)
-	})
-}
+	original, err := store.GetSettings(ctx)
+	require.NoError(t, err)
 
-func TestSettingsValidation(t *testing.T) {
-	t.Run("validates required fields", func(t *testing.T) {
-		settings := &Settings{
-			ID:          "default",
-			Channels:    []string{},
-			MaxTokens:   60,
-			LLMProvider: "openrouter",
-			LLMApiURL:   "https://openrouter.ai/api/v1",
-		}
+	// Temporarily move the only row away so UpdateSettings hits id='default' with 0 rows affected.
+	const movedID = "settings-default-moved"
+	_, err = store.pool.Exec(ctx, `DELETE FROM settings WHERE id = $1`, movedID)
+	require.NoError(t, err)
+	_, err = store.pool.Exec(ctx, `UPDATE settings SET id = $1 WHERE id = 'default'`, movedID)
+	require.NoError(t, err)
 
-		assert.NotEmpty(t, settings.ID)
-		assert.NotEmpty(t, settings.LLMProvider)
-		assert.NotEmpty(t, settings.LLMApiURL)
-		assert.Greater(t, settings.MaxTokens, 0)
+	t.Cleanup(func() {
+		_, err := store.pool.Exec(context.Background(), `UPDATE settings SET id = 'default' WHERE id = $1`, movedID)
+		require.NoError(t, err)
 	})
 
-	t.Run("validates max tokens range", func(t *testing.T) {
-		validTokens := []int{10, 60, 100, 500}
-		for _, tokens := range validTokens {
-			assert.Greater(t, tokens, 0)
-			assert.LessOrEqual(t, tokens, 1000)
-		}
-	})
+	var updateErr error
+	require.NotPanics(t, func() { updateErr = store.UpdateSettings(ctx, original) })
+	// RowsAffected == 0 is silently accepted today: the update is a no-op, not an error. Pin that behaviour.
+	require.NoError(t, updateErr)
 
-	t.Run("validates channel URLs", func(t *testing.T) {
-		validChannels := []string{
-			"https://www.twitch.tv/channel1",
-			"https://www.twitch.tv/channel2",
-		}
-
-		for _, channel := range validChannels {
-			assert.Contains(t, channel, "twitch.tv")
-		}
-	})
+	// No row was inserted either: id='default' is still missing.
+	_, err = store.GetSettings(ctx)
+	require.Error(t, err)
 }
