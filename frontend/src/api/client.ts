@@ -64,6 +64,8 @@ export interface Settings {
   twitch_client_id: string;
   twitch_client_secret: string;
   twitch_client_secret_set: boolean;
+  /** Request-only: when true, POST clears the stored secret. Never comes back from GET as true. */
+  twitch_client_secret_clear: boolean;
   presence_enabled: boolean;
   presence_session_min_minutes: number;
   presence_session_max_minutes: number;

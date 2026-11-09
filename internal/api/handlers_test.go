@@ -492,6 +492,48 @@ func TestUpdateSettings(t *testing.T) {
 		mockStore.AssertCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
 	})
 
+	// Transient flag wins over "empty keeps the stored value": an explicit
+	// twitch_client_secret_clear erases the secret. Sent as raw JSON so this
+	// test exercises the wire contract.
+	t.Run("clears stored twitch secret on explicit flag", func(t *testing.T) {
+		mockManager := new(MockBotManager)
+		mockStore := new(MockStore)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+
+		oldSettings := &storage.Settings{
+			ID:                         "default",
+			TwitchClientID:             "old-client-id",
+			TwitchClientSecret:         "stored-secret",
+			PresenceEnabled:            true,
+			PresenceSessionMinMinutes:  20,
+			PresenceSessionMaxMinutes:  40,
+			PresenceCooldownMinMinutes: 10,
+			PresenceCooldownMaxMinutes: 20,
+		}
+
+		mockStore.On("GetSettings", mock.Anything).Return(oldSettings, nil)
+		mockStore.On("UpdateSettings", mock.Anything, mock.MatchedBy(func(s *storage.Settings) bool {
+			return s.TwitchClientSecret == "" && !s.TwitchClientSecretSet && !s.TwitchClientSecretClear
+		})).Return(nil)
+		mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
+		body := []byte(`{"id":"default","twitch_client_id":"old-client-id","twitch_client_secret":"",` +
+			`"twitch_client_secret_clear":true,"presence_enabled":true,` +
+			`"presence_session_min_minutes":20,"presence_session_max_minutes":40,` +
+			`"presence_cooldown_min_minutes":10,"presence_cooldown_max_minutes":20}`)
+		req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+
+		handler.UpdateSettings(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		// The erase reaches storage as an empty secret with presence recomputed,
+		// and the transient flag itself is reset — it is never persisted.
+		mockStore.AssertCalled(t, "UpdateSettings", mock.Anything, mock.MatchedBy(func(s *storage.Settings) bool {
+			return s.TwitchClientSecret == "" && !s.TwitchClientSecretSet && !s.TwitchClientSecretClear
+		}))
+	})
+
 	t.Run("handles invalid JSON", func(t *testing.T) {
 		mockManager := new(MockBotManager)
 		mockStore := new(MockStore)

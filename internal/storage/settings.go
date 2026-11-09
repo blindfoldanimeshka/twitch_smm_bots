@@ -40,6 +40,7 @@ type Settings struct {
 	TwitchClientID              string    `json:"twitch_client_id"`
 	TwitchClientSecret          string    `json:"twitch_client_secret"`
 	TwitchClientSecretSet       bool      `json:"twitch_client_secret_set"`
+	TwitchClientSecretClear     bool      `json:"twitch_client_secret_clear"` // request-only erase flag, never persisted
 	UpdatedAt                   time.Time `json:"updated_at"`
 }
 

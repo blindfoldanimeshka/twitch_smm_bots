@@ -673,9 +673,15 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Same rule for the Twitch client secret: the client never sees the stored
 	// value back, so an empty incoming secret means "keep the stored secret".
-	if settings.TwitchClientSecret == "" {
+	// The transient twitch_client_secret_clear flag is an explicit erase and
+	// wins over that rule; the flag itself is request-only, so it is reset
+	// before the settings reach storage.
+	if settings.TwitchClientSecretClear {
+		settings.TwitchClientSecret = ""
+	} else if settings.TwitchClientSecret == "" {
 		settings.TwitchClientSecret = oldSettings.TwitchClientSecret
 	}
+	settings.TwitchClientSecretClear = false
 
 	// Overwrite incoming computed fields from resolution so the client cannot
 	// fabricate effective values or key provenance.

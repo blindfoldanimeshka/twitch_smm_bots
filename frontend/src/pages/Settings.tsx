@@ -80,6 +80,7 @@ function normalizeSettings(settings: SettingsType): SettingsType {
     twitch_client_id: settings.twitch_client_id ?? '',
     twitch_client_secret: settings.twitch_client_secret ?? '',
     twitch_client_secret_set: settings.twitch_client_secret_set ?? false,
+    twitch_client_secret_clear: settings.twitch_client_secret_clear ?? false,
     presence_enabled: settings.presence_enabled ?? true,
     presence_session_min_minutes: settings.presence_session_min_minutes ?? 20,
     presence_session_max_minutes: settings.presence_session_max_minutes ?? 40,
@@ -121,7 +122,9 @@ function settingsFormEqual(a: SettingsType, b: SettingsType): boolean {
  * - max_tokens: replaced by the saved clamp only when the current input still
  *   clamps to it, so a half-typed value that would save differently stays;
  * - both write-only secrets: cleared only when unchanged since the click,
- *   because the server never echoes them back.
+ *   because the server never echoes them back;
+ * - twitch_client_secret_clear: dropped once the save carried it, kept when the
+ *   click happened while that request was still in flight.
  */
 function reconcileAfterSave(form: SettingsType, payload: SettingsType): SettingsType {
   const currentChannels = form.channels.map((c) => c.trim()).filter((c) => c !== '')
@@ -143,6 +146,12 @@ function reconcileAfterSave(form: SettingsType, payload: SettingsType): Settings
     llm_api_key: form.llm_api_key === payload.llm_api_key ? '' : form.llm_api_key,
     twitch_client_secret:
       form.twitch_client_secret === payload.twitch_client_secret ? '' : form.twitch_client_secret,
+    // The clear request is consumed by the save (the server erased the secret and
+    // reset the flag), so the form flag goes false — except when it was clicked
+    // while the request was in flight: that erase has not been sent yet.
+    twitch_client_secret_clear: payload.twitch_client_secret_clear
+      ? false
+      : form.twitch_client_secret_clear,
     updated_at: payload.updated_at,
   }
 }
@@ -215,6 +224,7 @@ export default function Settings() {
     twitch_client_id: '',
     twitch_client_secret: '',
     twitch_client_secret_set: false,
+    twitch_client_secret_clear: false,
     // Mirrors the backend column defaults: a transient load failure must never
     // be the reason the form silently flips presence off or edits fake ranges.
     presence_enabled: true,
@@ -262,7 +272,11 @@ export default function Settings() {
   const dirty = useMemo(
     () =>
       baseline
-        ? !settingsFormEqual(formState, baseline) || formState.llm_api_key !== ''
+        ? !settingsFormEqual(formState, baseline) ||
+          formState.llm_api_key !== '' ||
+          // An erase request is an unsaved edit even though the secret input
+          // itself already looks empty.
+          formState.twitch_client_secret_clear
         : false,
     [formState, baseline],
   )
@@ -296,6 +310,9 @@ export default function Settings() {
         ...normalized,
         max_tokens: clampMaxTokensValue(normalized.max_tokens),
         twitch_client_secret: '',
+        // The erase was consumed by this save: the server reset the flag, and a
+        // baseline carrying it would hold `dirty` on forever.
+        twitch_client_secret_clear: false,
       })
       // The form is reconciled against the same payload: untouched fields snap to
       // the saved shape, edits made while the request was in flight stay put.
@@ -331,6 +348,24 @@ export default function Settings() {
 
   const update = <K extends keyof SettingsType>(key: K, value: SettingsType[K]) => {
     setFormState((prev) => ({ ...prev, [key]: value }))
+  }
+
+  // An empty secret field only means "keep the stored secret", so the erase has
+  // to travel on the transient flag; typing a new secret cancels it again.
+  const clearTwitchSecret = () => {
+    setFormState((prev) => ({
+      ...prev,
+      twitch_client_secret: '',
+      twitch_client_secret_clear: true,
+    }))
+  }
+
+  const updateTwitchSecret = (value: string) => {
+    setFormState((prev) => ({
+      ...prev,
+      twitch_client_secret: value,
+      twitch_client_secret_clear: false,
+    }))
   }
 
   // Env overrides: when the effective value differs from the stored one,
@@ -485,14 +520,26 @@ export default function Settings() {
               label="Twitch Client Secret"
               type="password"
               placeholder={
-                formState.twitch_client_secret_set
-                  ? 'Секрет сохранён — оставьте пустым, чтобы не менять'
-                  : 'ваш_client_secret'
+                formState.twitch_client_secret_clear
+                  ? 'Секрет будет удалён из базы при сохранении — введите новый, чтобы отменить'
+                  : formState.twitch_client_secret_set
+                    ? 'Секрет сохранён — оставьте пустым, чтобы не менять'
+                    : 'ваш_client_secret'
               }
               value={formState.twitch_client_secret}
-              onChange={(e) => update('twitch_client_secret', e.target.value)}
+              onChange={(e) => updateTwitchSecret(e.target.value)}
               autoComplete="new-password"
             />
+            {formState.twitch_client_secret_set && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Button variant="danger" size="sm" onClick={clearTwitchSecret}>
+                  Очистить секрет
+                </Button>
+                {formState.twitch_client_secret_clear && (
+                  <span style={HINT_STYLE}>Секрет будет удалён из базы при сохранении.</span>
+                )}
+              </div>
+            )}
             <p style={HINT_STYLE}>
               Не требуется для мониторинга. Пригодится только в будущем — как
               резервный вариант через официальный Helix API.
