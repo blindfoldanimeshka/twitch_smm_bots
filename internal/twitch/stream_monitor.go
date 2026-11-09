@@ -105,10 +105,13 @@ func (m *StreamMonitor) SetChannels(channels []string) {
 		if _, dup := seen[login]; dup {
 			continue
 		}
-		seen[login] = struct{}{}
 		if len(next) >= maxMonitoredChannels {
 			break
 		}
+		// Mark the channel as kept only once it survives the cap: the
+		// cleanup below closes every chat monitor absent from seen, so a
+		// channel capped out of the set must not be marked here.
+		seen[login] = struct{}{}
 		next = append(next, login)
 	}
 

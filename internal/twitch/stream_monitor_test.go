@@ -168,6 +168,33 @@ func TestStreamMonitorSetChannelsNormalizesAndCaps(t *testing.T) {
 	assert.GreaterOrEqual(t, chats["b"].closeCount, 1, "removed monitor must be closed")
 }
 
+// TestStreamMonitorCapClosesCappedOutMonitor is the regression test for the
+// leaked chat monitor: a channel that falls out of the top five because newer
+// channels arrived must be closed exactly like any other removed channel.
+func TestStreamMonitorCapClosesCappedOutMonitor(t *testing.T) {
+	public := &fakeStreamProvider{}
+	mon, chats := newFakeMonitor(public, nil)
+	mon.SetChannels([]string{"a", "b", "c", "d", "e"})
+
+	// Settings change keeps "a" alive in the input but capped out of the set.
+	mon.SetChannels([]string{"x1", "x2", "x3", "x4", "x5", "a"})
+
+	channels := mon.Channels()
+	assert.Len(t, channels, 5)
+	assert.NotContains(t, channels, "a")
+	assert.GreaterOrEqual(t, chats["a"].closeCount, 1, "capped-out channel's chat monitor must be closed")
+
+	// The factory map records every monitor ever created; the leak invariant
+	// is that exactly the current five are still open and nothing else is.
+	var live []string
+	for ch, fc := range chats {
+		if fc.closeCount == 0 {
+			live = append(live, ch)
+		}
+	}
+	assert.ElementsMatch(t, []string{"x1", "x2", "x3", "x4", "x5"}, live)
+}
+
 func TestStreamMonitorMessagesMarkBots(t *testing.T) {
 	public := &fakeStreamProvider{info: &PublicStreamInfo{Live: true, ViewerCount: 5}}
 	chat := &fakeChatProvider{
