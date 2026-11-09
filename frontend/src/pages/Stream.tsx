@@ -1,20 +1,88 @@
+import { useCallback, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
+import { useStreamStatus } from '../hooks/useStreamStatus'
+import { useWebSocketSubscription, type WSMessage } from '../hooks/useWebSocket'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Card } from '../components/ui/Card'
-import { EmptyState } from '../components/ui/EmptyState'
-import { MonitorPlay } from 'lucide-react'
+import { Select } from '../components/ui/Select'
+import { StreamCard } from '../components/StreamCard'
+import { ChatFeed, type ChatPresenceEvent } from '../components/ChatFeed'
+import { SetupBanner } from '../components/SetupBanner'
 
-// Minimal placeholder: the full Stream page is implemented in Task 9.
+const EVENT_CAP = 50
+
 export default function Stream() {
+  // Shared ['settings'] cache (same key as the Topbar), so no extra requests.
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => (await api.getSettings()).data,
+    refetchInterval: 30_000,
+  })
+  const channels = settings?.channels.filter((c) => c.trim() !== '') ?? []
+
+  const [selected, setSelected] = useState('')
+  // Falls back to the first channel until the user picks one (or if the
+  // selected channel disappears from settings).
+  const channel = channels.includes(selected) ? selected : (channels[0] ?? '')
+  const { data: status } = useStreamStatus(channel || undefined, channel !== '')
+
+  // Presence events arrive over the shared WebSocket (the same singleton the
+  // log store listens to); this page only adds a subscriber, no new socket.
+  const [presenceEvents, setPresenceEvents] = useState<ChatPresenceEvent[]>([])
+  useWebSocketSubscription(
+    useCallback((msg: WSMessage) => {
+      if (msg.type !== 'bot_presence_changed') {
+        return
+      }
+      const payload = (msg.payload ?? {}) as { login?: unknown; state?: unknown; at?: unknown }
+      if (typeof payload.login !== 'string' || payload.login === '') {
+        return
+      }
+      const event: ChatPresenceEvent = {
+        login: payload.login,
+        state: typeof payload.state === 'string' ? payload.state : '',
+        at: typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
+      }
+      setPresenceEvents((prev) => {
+        const next = [...prev, event]
+        return next.length > EVENT_CAP ? next.slice(-EVENT_CAP) : next
+      })
+    }, []),
+  )
+
   return (
     <>
-      <PageHeader title="Стрим" description="Статус трансляции, зрители и чат" />
-      <Card title="Трансляция">
-        <EmptyState
-          icon={MonitorPlay}
-          title="Статус стрима появится здесь"
-          description="Этот раздел сейчас в разработке."
+      <PageHeader
+        title="Стрим"
+        description="Плеер, метрики зрителей и чат выбранного канала"
+        actions={
+          channels.length > 0 && (
+            <Select
+              aria-label="Канал"
+              options={channels.map((c) => ({ value: c, label: c }))}
+              value={channel}
+              onChange={(e) => setSelected(e.target.value)}
+              style={{ minWidth: 220 }}
+            />
+          )
+        }
+      />
+
+      {channels.length === 0 ? (
+        <SetupBanner
+          tone="info"
+          title="Канал не задан"
+          description="Добавьте Twitch-каналы в настройках — здесь появятся плеер, зрители и чат."
         />
-      </Card>
+      ) : (
+        <div style={{ display: 'grid', gap: 16 }}>
+          <StreamCard status={status} channel={channel} />
+          <Card title="Чат" subtitle={`Последние 50 сообщений канала ${channel} и события присутствия ботов`}>
+            <ChatFeed messages={status?.messages ?? []} events={presenceEvents} />
+          </Card>
+        </div>
+      )}
     </>
   )
 }
