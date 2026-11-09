@@ -3,8 +3,6 @@ import { Bot, LayoutDashboard, MonitorPlay, Settings, type LucideIcon } from 'lu
 
 export type Page = 'dashboard' | 'stream' | 'bots' | 'settings'
 
-export const APP_VERSION = 'v0.1.0'
-
 interface NavItem {
   page: Page
   label: string
@@ -49,7 +47,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       </nav>
 
       <div className="sidebar__footer">
-        <span className="sidebar__version">версия {APP_VERSION}</span>
+        <span className="sidebar__version">версия v{__APP_VERSION__}</span>
       </div>
     </aside>
   )
