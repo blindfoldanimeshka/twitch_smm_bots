@@ -98,6 +98,7 @@ export default function Settings() {
     llm_api_key_source: 'none',
     twitch_client_id: '',
     twitch_client_secret: '',
+    twitch_client_secret_set: false,
     // Mirrors the backend column defaults: a transient load failure must never
     // be the reason the form silently flips presence off or edits fake ranges.
     presence_enabled: true,
@@ -163,6 +164,7 @@ export default function Settings() {
       llm_api_key_source: settings.llm_api_key_source ?? 'none',
       twitch_client_id: settings.twitch_client_id ?? '',
       twitch_client_secret: settings.twitch_client_secret ?? '',
+      twitch_client_secret_set: settings.twitch_client_secret_set ?? false,
       presence_enabled: settings.presence_enabled ?? true,
       presence_session_min_minutes: settings.presence_session_min_minutes ?? 20,
       presence_session_max_minutes: settings.presence_session_max_minutes ?? 40,
@@ -353,7 +355,11 @@ export default function Settings() {
             <Input
               label="Twitch Client Secret"
               type="password"
-              placeholder="ваш_client_secret"
+              placeholder={
+                formState.twitch_client_secret_set
+                  ? 'Секрет сохранён — оставьте пустым, чтобы не менять'
+                  : 'ваш_client_secret'
+              }
               value={formState.twitch_client_secret}
               onChange={(e) => update('twitch_client_secret', e.target.value)}
               autoComplete="new-password"

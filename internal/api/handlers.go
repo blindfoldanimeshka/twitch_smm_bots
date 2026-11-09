@@ -563,6 +563,10 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	settings.LLMPaidEnabledEffective = cfg.PaidEnabled
 	settings.LLMPaidDailyCapUSDEffective = cfg.PaidDailyCapUSD
 
+	// The Twitch client secret is write-only: report presence, never the value.
+	settings.TwitchClientSecretSet = settings.TwitchClientSecret != ""
+	settings.TwitchClientSecret = ""
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }
@@ -611,6 +615,12 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		settings.LLMApiKey = oldSettings.LLMApiKey
 	}
 
+	// Same rule for the Twitch client secret: the client never sees the stored
+	// value back, so an empty incoming secret means "keep the stored secret".
+	if settings.TwitchClientSecret == "" {
+		settings.TwitchClientSecret = oldSettings.TwitchClientSecret
+	}
+
 	// Overwrite incoming computed fields from resolution so the client cannot
 	// fabricate effective values or key provenance.
 	cfg, source := h.resolveSettings(&settings)
@@ -618,6 +628,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	settings.LLMApiKeySource = source
 	settings.LLMPaidEnabledEffective = cfg.PaidEnabled
 	settings.LLMPaidDailyCapUSDEffective = cfg.PaidDailyCapUSD
+	settings.TwitchClientSecretSet = settings.TwitchClientSecret != ""
 
 	if err := h.store.UpdateSettings(ctx, &settings); err != nil {
 		h.logSettingsChange("error", "Failed to save settings", nil)

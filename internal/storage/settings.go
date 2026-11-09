@@ -39,6 +39,7 @@ type Settings struct {
 	LLMApiKeySource             string    `json:"llm_api_key_source"`
 	TwitchClientID              string    `json:"twitch_client_id"`
 	TwitchClientSecret          string    `json:"twitch_client_secret"`
+	TwitchClientSecretSet       bool      `json:"twitch_client_secret_set"`
 	UpdatedAt                   time.Time `json:"updated_at"`
 }
 

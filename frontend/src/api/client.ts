@@ -84,6 +84,7 @@ export interface Settings {
   llm_api_key_source: 'env' | 'database' | 'none';
   twitch_client_id: string;
   twitch_client_secret: string;
+  twitch_client_secret_set: boolean;
   presence_enabled: boolean;
   presence_session_min_minutes: number;
   presence_session_max_minutes: number;

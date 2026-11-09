@@ -387,6 +387,8 @@ func TestGetSettings(t *testing.T) {
 		assert.Equal(t, "default", settings.ID)
 		assert.Equal(t, "openrouter", settings.LLMProvider)
 		assert.Equal(t, "test-client-id", settings.TwitchClientID)
+		assert.Empty(t, settings.TwitchClientSecret, "twitch client secret must not be returned")
+		assert.True(t, settings.TwitchClientSecretSet, "secret presence must be reported")
 	})
 
 	t.Run("handles error when settings not found", func(t *testing.T) {
@@ -454,6 +456,40 @@ func TestUpdateSettings(t *testing.T) {
 		handler.UpdateSettings(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("keeps stored twitch secret when incoming secret is empty", func(t *testing.T) {
+		mockManager := new(MockBotManager)
+		mockStore := new(MockStore)
+		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
+
+		oldSettings := &storage.Settings{
+			ID:                         "default",
+			TwitchClientID:             "old-client-id",
+			TwitchClientSecret:         "stored-secret",
+			PresenceEnabled:            true,
+			PresenceSessionMinMinutes:  20,
+			PresenceSessionMaxMinutes:  40,
+			PresenceCooldownMinMinutes: 10,
+			PresenceCooldownMaxMinutes: 20,
+		}
+		newSettings := *oldSettings
+		newSettings.TwitchClientSecret = ""
+
+		mockStore.On("GetSettings", mock.Anything).Return(oldSettings, nil)
+		mockStore.On("UpdateSettings", mock.Anything, mock.MatchedBy(func(s *storage.Settings) bool {
+			return s.TwitchClientSecret == "stored-secret" && s.TwitchClientSecretSet
+		})).Return(nil)
+		mockStore.On("CreateSettingsLog", mock.Anything, mock.Anything).Return(nil)
+
+		body, _ := json.Marshal(&newSettings)
+		req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+
+		handler.UpdateSettings(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockStore.AssertCalled(t, "UpdateSettings", mock.Anything, mock.Anything)
 	})
 
 	t.Run("handles invalid JSON", func(t *testing.T) {
