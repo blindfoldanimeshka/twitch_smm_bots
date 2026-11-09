@@ -997,6 +997,47 @@ func (bm *botManager) markBotError(br *botRuntime) {
 	bm.broadcastPresence(br)
 }
 
+// markBotErrorIfActive flags a runtime as errored only while its loop is
+// still the active run: a cancelled loop (stopBot timed out, the bot was
+// restarted) must never mutate the state of a newer run that may already own
+// the same runtime. It returns true when the error state was applied.
+func (bm *botManager) markBotErrorIfActive(ctx context.Context, br *botRuntime) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	bm.markBotError(br)
+	return true
+}
+
+// sleepCtx sleeps for d unless ctx is cancelled first. It reports whether the
+// full sleep completed: false means the run was cancelled and the loop must
+// stop without touching the runtime any further.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// touchLastSent records the time of this run's last generated message under
+// bm.mu, so a stale loop can never race a newer run's reads of br.lastSent.
+func (bm *botManager) touchLastSent(br *botRuntime, t time.Time) {
+	bm.mu.Lock()
+	br.lastSent = t
+	bm.mu.Unlock()
+}
+
+// lastSentAt reads this runtime's last message time under bm.mu.
+func (bm *botManager) lastSentAt(br *botRuntime) time.Time {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	return br.lastSent
+}
+
 func (bm *botManager) stopAudio() {
 	bm.mu.Lock()
 	enabled := bm.audioService != nil
@@ -1109,9 +1150,14 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 
 	// P0-1: Graceful shutdown - ensure we signal when done
 	defer func() {
-		// P0-1: Log reason for stopping
+		// P0-1: Log reason for stopping. br.stopping belongs to the manager's
+		// state and may be written by stopBot concurrently: read it under bm.mu.
+		bm.mu.RLock()
+		stopping := br.stopping
+		bm.mu.RUnlock()
+
 		reason := "stopped"
-		if br.stopping {
+		if stopping {
 			reason = "stopped gracefully (user request)"
 		}
 
@@ -1162,10 +1208,14 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					slog.Error("too many errors, stopping bot", "bot_id", br.cfg.ID)
-					bm.markBotError(br)
+					// A cancelled loop must never flag a newer run as errored.
+					bm.markBotErrorIfActive(ctx, br)
 					return
 				}
-				time.Sleep(errorRetryDelay)
+				// The retry wait must not outlive this run.
+				if !sleepCtx(ctx, errorRetryDelay) {
+					return
+				}
 				continue
 			}
 			slog.Info("reconnected successfully", "bot_id", br.cfg.ID)
@@ -1174,8 +1224,8 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		}
 
 		interval := minInterval(br.cfg.RateLimitPerMin)
-		if !br.lastSent.IsZero() {
-			nextAllowed := br.lastSent.Add(interval)
+		if lastSent := bm.lastSentAt(br); !lastSent.IsZero() {
+			nextAllowed := lastSent.Add(interval)
 			if now := time.Now(); nextAllowed.After(now) {
 				sleep := time.NewTimer(nextAllowed.Sub(now))
 				select {
@@ -1225,15 +1275,22 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			consecutiveErrors++
 			if consecutiveErrors >= maxConsecutiveErrors {
 				slog.Error("too many LLM errors, stopping bot", "bot_id", br.cfg.ID)
-				bm.markBotError(br)
+				// A cancelled loop must never flag a newer run as errored.
+				bm.markBotErrorIfActive(ctx, br)
 				return
 			}
 			continue
 		}
 
-		// Успешная генерация - сбрасываем счетчик ошибок и обновляем время
+		// Успешная генерация - сбрасываем счетчик ошибок и обновляем время.
+		// Generation can outlive this run: if the context was cancelled while
+		// we were calling the LLM, a newer run may own br already, so record
+		// nothing for this run and exit.
+		if ctx.Err() != nil {
+			return
+		}
 		consecutiveErrors = 0
-		br.lastSent = now
+		bm.touchLastSent(br, now)
 		slog.Info("message sent", "bot_id", br.cfg.ID, "personality", br.cfg.Personality, "message", msg)
 
 		// Логируем и отправляем через WebSocket ДО отправки в Twitch

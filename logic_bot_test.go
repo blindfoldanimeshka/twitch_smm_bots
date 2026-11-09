@@ -207,3 +207,43 @@ func TestStaleLoopDoesNotSendAfterCancelDuringWait(t *testing.T) {
 
 	assert.Empty(t, fake.SentMessages(), "loop sent through its client after the run was cancelled during the rate-limit wait")
 }
+
+func TestMarkBotErrorIfActiveSkipsCancelledContext(t *testing.T) {
+	bm := newBotManager(nil, nil, nil, nil, context.Background(), "testchannel", 0, audio.Config{}, false, nil)
+	br := &botRuntime{cfg: storage.BotConfig{ID: "bot-1"}, running: true}
+	bm.bots["bot-1"] = br
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if bm.markBotErrorIfActive(ctx, br) {
+		t.Fatal("cancelled loop must not mark the runtime as errored")
+	}
+	if br.presenceState == presenceStateError || br.stoppedByError || !br.running {
+		t.Fatalf("cancelled loop mutated the runtime: state=%q stoppedByError=%v running=%v",
+			br.presenceState, br.stoppedByError, br.running)
+	}
+
+	if !bm.markBotErrorIfActive(context.Background(), br) {
+		t.Fatal("active loop must still mark the runtime as errored")
+	}
+	if br.presenceState != presenceStateError || !br.stoppedByError || br.running {
+		t.Fatal("active path must mark the error state")
+	}
+}
+
+func TestSleepCtxStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	if sleepCtx(ctx, time.Second) {
+		t.Fatal("sleepCtx must report cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("sleepCtx ignored cancellation for %v", elapsed)
+	}
+	if !sleepCtx(context.Background(), 10*time.Millisecond) {
+		t.Fatal("sleepCtx must return true when the context is alive")
+	}
+}
