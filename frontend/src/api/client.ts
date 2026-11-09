@@ -31,27 +31,6 @@ export interface CreateBotRequest {
   rate_limit_per_min: number;
 }
 
-export interface Proxy {
-  id: string;
-  host: string;
-  port: number;
-  username?: string;
-  protocol: string;
-  enabled: boolean;
-  last_used_at?: string;
-  fail_count: number;
-  created_at: string;
-}
-
-export interface CreateProxyRequest {
-  id: string;
-  host: string;
-  port: number;
-  username?: string;
-  password?: string;
-  protocol: string;
-}
-
 export interface Stats {
   total_bots: number;
   running_bots: number;
@@ -194,7 +173,6 @@ export function getErrorMessage(error: unknown): string {
 export const api = {
   // Bots
   getBots: () => client.get<Bot[]>('/api/bots'),
-  getBot: (id: string) => client.get<Bot>(`/api/bots/${id}`),
   createBot: (data: CreateBotRequest) => client.post('/api/bots', data),
   updateBot: (id: string, data: Partial<Bot>) => client.put(`/api/bots/${id}`, data),
   deleteBot: (id: string) => client.delete(`/api/bots/${id}`),
@@ -205,11 +183,6 @@ export const api = {
   stopBot: (id: string) => client.post(`/api/bots/${id}/stop`),
   startAll: () => client.post('/api/bots/start-all'),
   stopAll: () => client.post('/api/bots/stop-all'),
-
-  // Proxies
-  getProxies: () => client.get<Proxy[]>('/api/proxies'),
-  createProxy: (data: CreateProxyRequest) => client.post('/api/proxies', data),
-  deleteProxy: (id: string) => client.delete(`/api/proxies/${id}`),
 
   // Stats
   getStats: () => client.get<Stats>('/api/stats'),

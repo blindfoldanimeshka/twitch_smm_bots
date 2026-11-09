@@ -56,7 +56,6 @@ const initialFormData: BotFormData = {
 export function useBotForm(editingBot?: any) {
   const [formData, setFormData] = useState<BotFormData>(buildFormData(editingBot))
   const [touchedFields, setTouchedFields] = useState<TouchedFields>({})
-  const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
     setFormData(buildFormData(editingBot))
@@ -141,7 +140,6 @@ export function useBotForm(editingBot?: any) {
   const reset = useCallback(() => {
     setFormData(buildFormData(editingBot))
     setTouchedFields({})
-    setShowAdvanced(false)
   }, [editingBot])
 
   return {
@@ -149,8 +147,6 @@ export function useBotForm(editingBot?: any) {
     errors,
     touchedFields,
     isValid,
-    showAdvanced,
-    setShowAdvanced,
     handleChange,
     handleBlur,
     reset,

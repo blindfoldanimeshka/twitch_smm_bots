@@ -1,17 +1,9 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { config } from '../config';
-import { useLogStore } from '../stores/logStore';
 
 export interface WSMessage {
   type: string;
   payload: any;
-}
-
-export interface BotPresenceEvent {
-  bot_id: string;
-  login: string;
-  state: 'online' | 'cooldown' | 'stopped' | 'error' | string;
-  at: string;
 }
 
 type MessageHandler = (msg: WSMessage) => void;
@@ -21,8 +13,7 @@ type StatusListener = (connected: boolean) => void;
 // Shared singleton connection
 //
 // The whole app uses exactly one WebSocket, no matter how many components
-// subscribe. The singleton feeds the log store once per message and then
-// fans out to all registered handlers.
+// subscribe. The singleton fans out each message to all registered handlers.
 // ---------------------------------------------------------------------------
 
 const BASE_RECONNECT_DELAY_MS = 1_000;
@@ -41,54 +32,6 @@ let reconnectTimer: number | undefined;
 function setConnected(next: boolean): void {
   connected = next;
   statusListeners.forEach((listener) => listener(next));
-}
-
-function handleStoreEvents(msg: WSMessage): void {
-  const payload = msg.payload ?? {};
-
-  if (msg.type === 'bot_log') {
-    const botId = payload.bot_id || payload.botID || '';
-    useLogStore.getState().addBotLog(botId, {
-      botId,
-      logType: payload.log_type || payload.logType || 'message',
-      level: payload.level || 'info',
-      message: payload.message,
-      context: payload.context,
-      timestamp: new Date(payload.timestamp),
-    });
-    return;
-  }
-
-  if (msg.type === 'bot_message_sent') {
-    const botId = payload.bot_id || payload.botID || '';
-    useLogStore.getState().addBotLog(botId, {
-      botId,
-      logType: 'message',
-      level: 'success',
-      message: payload.message,
-      context: payload.channel ? { channel: payload.channel, personality: payload.personality } : undefined,
-      timestamp: new Date(payload.timestamp || Date.now()),
-    });
-    return;
-  }
-
-  if (msg.type === 'settings_log') {
-    useLogStore.getState().addSettingsLog({
-      level: payload.level || 'info',
-      message: payload.message,
-      timestamp: new Date(payload.timestamp),
-    });
-    return;
-  }
-
-  if (msg.type === 'bot_presence_changed') {
-    useLogStore.getState().addPresenceEvent({
-      bot_id: payload.bot_id,
-      login: payload.login,
-      state: payload.state,
-      at: payload.at,
-    });
-  }
 }
 
 function connect(): void {
@@ -120,7 +63,6 @@ function connect(): void {
     } catch {
       return; // malformed payload: drop silently
     }
-    handleStoreEvents(msg);
     messageHandlers.forEach((handler) => handler(msg));
   };
 
@@ -230,14 +172,4 @@ export const useWebSocketSubscription = (onMessage: (msg: WSMessage) => void): v
       }),
     []
   );
-};
-
-/**
- * Compatibility wrapper for the pre-provider API. Subscribes to the shared
- * socket and reports its connection state. New code should use
- * `useWebSocketSubscription` + `useWebSocketStatus` instead.
- */
-export const useWebSocket = (onMessage: (msg: WSMessage) => void): { connected: boolean } => {
-  useWebSocketSubscription(onMessage);
-  return useWebSocketStatus();
 };
