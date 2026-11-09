@@ -55,15 +55,15 @@ func TestCreateAndGetBot(t *testing.T) {
 
 	// Create bot
 	bot := BotConfig{
-		ID:          "test-bot-1",
-		TwitchLogin: "testlogin",
-		Password:    "oauth:test123",
-		Name:        "Test Bot",
-		Personality:  "веселый_фанат",
-		MinDelaySec: 10,
-		MaxDelaySec: 30,
+		ID:              "test-bot-1",
+		TwitchLogin:     "testlogin",
+		Password:        "oauth:test123",
+		Name:            "Test Bot",
+		Personality:     "веселый_фанат",
+		MinDelaySec:     10,
+		MaxDelaySec:     30,
 		RateLimitPerMin: 5,
-		Enabled:     false,
+		Enabled:         false,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -97,15 +97,15 @@ func TestUpdateBot(t *testing.T) {
 
 	// Create bot first
 	bot := BotConfig{
-		ID:          "test-bot-2",
-		TwitchLogin: "testlogin2",
-		Password:    "oauth:test456",
-		Name:        "Test Bot 2",
-		Personality:  "токсик",
-		MinDelaySec: 15,
-		MaxDelaySec: 45,
+		ID:              "test-bot-2",
+		TwitchLogin:     "testlogin2",
+		Password:        "oauth:test456",
+		Name:            "Test Bot 2",
+		Personality:     "токсик",
+		MinDelaySec:     15,
+		MaxDelaySec:     45,
 		RateLimitPerMin: 3,
-		Enabled:     true,
+		Enabled:         true,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -115,8 +115,8 @@ func TestUpdateBot(t *testing.T) {
 
 	// Update bot
 	updates := map[string]interface{}{
-		"name":        "Updated Bot Name",
-		"personality": "нейтрал",
+		"name":          "Updated Bot Name",
+		"personality":   "нейтрал",
 		"min_delay_sec": 20,
 	}
 
@@ -154,11 +154,14 @@ func TestUpdateBotInvalidColumn(t *testing.T) {
 
 	// Create bot first
 	bot := BotConfig{
-		ID:          "test-bot-3",
-		TwitchLogin: "testlogin3",
-		Password:    "oauth:test789",
-		Name:        "Test Bot 3",
-		Personality:  "хайпер",
+		ID:              "test-bot-3",
+		TwitchLogin:     "testlogin3",
+		Password:        "oauth:test789",
+		Name:            "Test Bot 3",
+		Personality:     "хайпер",
+		MinDelaySec:     45,
+		MaxDelaySec:     180,
+		RateLimitPerMin: 10,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -189,10 +192,13 @@ func TestDeleteBot(t *testing.T) {
 
 	// Create bot first
 	bot := BotConfig{
-		ID:          "test-bot-4",
-		TwitchLogin: "testlogin4",
-		Password:    "oauth:test000",
-		Name:        "Test Bot 4",
+		ID:              "test-bot-4",
+		TwitchLogin:     "testlogin4",
+		Password:        "oauth:test000",
+		Name:            "Test Bot 4",
+		MinDelaySec:     45,
+		MaxDelaySec:     180,
+		RateLimitPerMin: 10,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -225,11 +231,14 @@ func TestSetBotEnabled(t *testing.T) {
 
 	// Create bot first
 	bot := BotConfig{
-		ID:          "test-bot-5",
-		TwitchLogin: "testlogin5",
-		Password:    "oauth:test111",
-		Name:        "Test Bot 5",
-		Enabled:     false,
+		ID:              "test-bot-5",
+		TwitchLogin:     "testlogin5",
+		Password:        "oauth:test111",
+		Name:            "Test Bot 5",
+		Enabled:         false,
+		MinDelaySec:     45,
+		MaxDelaySec:     180,
+		RateLimitPerMin: 10,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -274,11 +283,14 @@ func TestUpdateBotChannel(t *testing.T) {
 
 	// Create bot first
 	bot := BotConfig{
-		ID:             "test-bot-6",
-		TwitchLogin:    "testlogin6",
-		Password:       "oauth:test222",
-		Name:           "Test Bot 6",
-		CurrentChannel: "channel1",
+		ID:              "test-bot-6",
+		TwitchLogin:     "testlogin6",
+		Password:        "oauth:test222",
+		Name:            "Test Bot 6",
+		CurrentChannel:  "channel1",
+		MinDelaySec:     45,
+		MaxDelaySec:     180,
+		RateLimitPerMin: 10,
 	}
 
 	err := store.CreateBot(ctx, bot)
@@ -311,8 +323,8 @@ func TestListBots(t *testing.T) {
 
 	// Create multiple bots
 	bots := []BotConfig{
-		{ID: "test-bot-7", TwitchLogin: "login7", Password: "pass7", Name: "Bot 7"},
-		{ID: "test-bot-8", TwitchLogin: "login8", Password: "pass8", Name: "Bot 8"},
+		{ID: "test-bot-7", TwitchLogin: "login7", Password: "pass7", Name: "Bot 7", MinDelaySec: 45, MaxDelaySec: 180, RateLimitPerMin: 10},
+		{ID: "test-bot-8", TwitchLogin: "login8", Password: "pass8", Name: "Bot 8", MinDelaySec: 45, MaxDelaySec: 180, RateLimitPerMin: 10},
 	}
 
 	for _, bot := range bots {
