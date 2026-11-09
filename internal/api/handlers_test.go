@@ -1183,3 +1183,174 @@ func TestBroadcastBotPresence(t *testing.T) {
 		t.Fatal("BroadcastBotPresence did not deliver a message to the subscriber")
 	}
 }
+
+// validBotInfo is the stored configuration UpdateBot validates against.
+func validBotInfo() *BotInfo {
+	return &BotInfo{Config: storage.BotConfig{
+		ID:              "bot1",
+		TwitchLogin:     "testlogin",
+		Password:        "secret-pass",
+		Name:            "Test Bot",
+		Personality:     "нейтрал",
+		MinDelaySec:     5,
+		MaxDelaySec:     15,
+		RateLimitPerMin: 10,
+	}}
+}
+
+func TestUpdateBotRejectsInvalidConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]interface{}
+	}{
+		{"min delay zero", map[string]interface{}{"min_delay_sec": 0}},
+		{"max below current min", map[string]interface{}{"max_delay_sec": 3}},
+		{"max below new min", map[string]interface{}{"min_delay_sec": 20, "max_delay_sec": 10}},
+		{"rate limit zero", map[string]interface{}{"rate_limit_per_min": 0}},
+		{"unknown personality", map[string]interface{}{"personality": "unknown"}},
+		{"empty name", map[string]interface{}{"name": ""}},
+		{"blank name", map[string]interface{}{"name": "   "}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockManager := new(MockBotManager)
+			handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+			mockManager.On("GetBot", "bot1").Return(validBotInfo(), nil)
+			// Registered so a rejected update is reported as an assertion
+			// failure instead of an unexpected-call panic.
+			mockManager.On("UpdateBot", mock.Anything, "bot1", mock.Anything).Return(nil)
+
+			body, err := json.Marshal(tc.body)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/api/bots/bot1", bytes.NewReader(body))
+			req = mux.SetURLVars(req, map[string]string{"id": "bot1"})
+			w := httptest.NewRecorder()
+
+			handler.UpdateBot(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), "error")
+			mockManager.AssertNotCalled(t, "UpdateBot", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+
+	t.Run("valid partial update succeeds", func(t *testing.T) {
+		mockManager := new(MockBotManager)
+		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+		mockManager.On("GetBot", "bot1").Return(validBotInfo(), nil)
+		mockManager.On("UpdateBot", mock.Anything, "bot1", mock.Anything).Return(nil)
+
+		body, err := json.Marshal(map[string]interface{}{"max_delay_sec": 30})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/bots/bot1", bytes.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "bot1"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateBot(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		mockManager.AssertCalled(t, "UpdateBot", mock.Anything, "bot1", mock.Anything)
+	})
+
+	t.Run("unrelated update on legacy row succeeds", func(t *testing.T) {
+		// Строка старше валидации: пустая личность не должна блокировать
+		// правку других полей.
+		legacy := &BotInfo{Config: storage.BotConfig{
+			ID: "bot1", Name: "Old Bot", Personality: "",
+			MinDelaySec: 5, MaxDelaySec: 15, RateLimitPerMin: 10,
+		}}
+
+		mockManager := new(MockBotManager)
+		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+		mockManager.On("GetBot", "bot1").Return(legacy, nil)
+		mockManager.On("UpdateBot", mock.Anything, "bot1", mock.Anything).Return(nil)
+
+		body, err := json.Marshal(map[string]interface{}{"max_delay_sec": 30})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/bots/bot1", bytes.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "bot1"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateBot(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	})
+
+	t.Run("unknown bot returns 404", func(t *testing.T) {
+		mockManager := new(MockBotManager)
+		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+		mockManager.On("GetBot", "ghost").Return(nil, assert.AnError)
+		mockManager.On("UpdateBot", mock.Anything, "ghost", mock.Anything).Return(assert.AnError)
+
+		body, err := json.Marshal(map[string]interface{}{"max_delay_sec": 30})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/bots/ghost", bytes.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "ghost"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateBot(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+		mockManager.AssertNotCalled(t, "UpdateBot", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("storage error still returns 500", func(t *testing.T) {
+		mockManager := new(MockBotManager)
+		handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+		mockManager.On("GetBot", "bot1").Return(validBotInfo(), nil)
+		mockManager.On("UpdateBot", mock.Anything, "bot1", mock.Anything).Return(assert.AnError)
+
+		body, err := json.Marshal(map[string]interface{}{"max_delay_sec": 30})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/bots/bot1", bytes.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "bot1"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateBot(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	})
+}
+
+func TestCalculateSettingsChangesIncludesTwitchFields(t *testing.T) {
+	handler := &Handler{}
+	old := &storage.Settings{
+		TwitchClientID:     "old-id",
+		TwitchClientSecret: "old-secret",
+	}
+	new := &storage.Settings{
+		TwitchClientID:     "new-id",
+		TwitchClientSecret: "new-secret",
+	}
+
+	changes := handler.calculateSettingsChanges(old, new)
+
+	idEntry, ok := changes["twitch_client_id"].(map[string]interface{})
+	require.True(t, ok, "twitch_client_id must be an old/new map")
+	assert.Equal(t, "old-id", idEntry["old"])
+	assert.Equal(t, "new-id", idEntry["new"])
+
+	secretEntry, ok := changes["twitch_client_secret"].(map[string]interface{})
+	require.True(t, ok, "twitch_client_secret must be reported as a change flag")
+	assert.Equal(t, map[string]interface{}{"changed": true}, secretEntry)
+
+	serialized, err := json.Marshal(changes)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), "old-secret")
+	assert.NotContains(t, string(serialized), "new-secret")
+
+	message := handler.formatSettingsChangeMessage(changes)
+	assert.Contains(t, message, "Twitch")
+	assert.NotContains(t, message, "old-secret")
+	assert.NotContains(t, message, "new-secret")
+
+	unchanged := handler.calculateSettingsChanges(old, old)
+	assert.NotContains(t, unchanged, "twitch_client_id")
+	assert.NotContains(t, unchanged, "twitch_client_secret")
+}

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -292,6 +293,19 @@ func (h *Handler) UpdateBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	info, err := h.manager.GetBot(botID)
+	if err != nil || info == nil {
+		http.Error(w, `{"error":"bot not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Проверяем эффективную конфигурацию (текущий бот + присланные поля),
+	// иначе невалидные значения уходят в хранилище и падают на CHECK.
+	if err := validateBotUpdate(info.Config, req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
 	updates := make(map[string]interface{})
 	if req.Name != nil {
 		updates["name"] = *req.Name
@@ -329,6 +343,48 @@ func (h *Handler) UpdateBot(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// validateBotUpdate checks the configuration that results from applying the
+// request on top of the stored bot config. The delay pair is validated against
+// the stored counterpart, because a single-field update can still break the
+// max >= min invariant. Name and personality are checked only when the client
+// sends them: rows created before this validation must stay editable.
+func validateBotUpdate(current storage.BotConfig, req UpdateBotRequest) error {
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		return errors.New("name must not be empty")
+	}
+
+	if req.Personality != nil {
+		if err := ValidatePersonality(*req.Personality); err != nil {
+			return fmt.Errorf("personality: %w", err)
+		}
+	}
+
+	minDelay, maxDelay := current.MinDelaySec, current.MaxDelaySec
+	if req.MinDelaySec != nil {
+		minDelay = *req.MinDelaySec
+	}
+	if req.MaxDelaySec != nil {
+		maxDelay = *req.MaxDelaySec
+	}
+
+	rateLimit := current.RateLimitPerMin
+	if req.RateLimitPerMin != nil {
+		rateLimit = *req.RateLimitPerMin
+	}
+
+	if minDelay <= 0 {
+		return ErrMinDelayInvalid
+	}
+	if maxDelay < minDelay {
+		return ErrMaxDelayInvalid
+	}
+	if rateLimit <= 0 {
+		return ErrRateLimitInvalid
+	}
+
+	return nil
 }
 
 func (h *Handler) DeleteBot(w http.ResponseWriter, r *http.Request) {
@@ -821,6 +877,20 @@ func (h *Handler) calculateSettingsChanges(old, new *storage.Settings) map[strin
 		}
 	}
 
+	if old.TwitchClientID != new.TwitchClientID {
+		changes["twitch_client_id"] = map[string]interface{}{
+			"old": old.TwitchClientID,
+			"new": new.TwitchClientID,
+		}
+	}
+
+	// Секрет в журнал не попадает никогда — только факт изменения.
+	if old.TwitchClientSecret != new.TwitchClientSecret {
+		changes["twitch_client_secret"] = map[string]interface{}{
+			"changed": true,
+		}
+	}
+
 	return changes
 }
 
@@ -883,6 +953,12 @@ func (h *Handler) formatSettingsChangeMessage(changes map[string]interface{}) st
 	}
 	if _, ok := changes["llm_api_key"]; ok {
 		parts = append(parts, "API key changed")
+	}
+	if _, ok := changes["twitch_client_id"]; ok {
+		parts = append(parts, "Twitch Client ID changed")
+	}
+	if _, ok := changes["twitch_client_secret"]; ok {
+		parts = append(parts, "Twitch Client Secret changed (value hidden)")
 	}
 
 	if len(parts) == 0 {
