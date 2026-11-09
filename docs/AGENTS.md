@@ -3,6 +3,10 @@
 ## Project Overview
 TwitchSMM is a Twitch bot management system with a Go backend and React frontend.
 
+**Before changing code:** read `docs/CODE_GRAPH.md` (human/agent map) and
+`docs/code-graph.json` (machine-readable nodes/edges). They name the responsible
+files, key symbols, data flows, invariants, and common commands.
+
 ## Tech Stack
 - **Backend**: Go 1.26+, PostgreSQL, Redis, Docker
 - **Frontend**: React 19, TypeScript, Vite
