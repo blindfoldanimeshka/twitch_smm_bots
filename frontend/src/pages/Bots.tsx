@@ -8,6 +8,7 @@ import { BotsTable } from '../components/BotsTable'
 import { BotModal } from '../components/BotModal'
 import { BotLogsDrawer } from '../components/BotLogsDrawer'
 import { Alert } from '../components/ui/Alert'
+import { AsyncState } from '../components/ui/AsyncState'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
@@ -24,6 +25,7 @@ export default function Bots() {
 
   const {
     data: bots = [],
+    isLoading: botsLoading,
     isError: botsLoadFailed,
     refetch: refetchBots,
   } = useQuery({
@@ -182,18 +184,15 @@ export default function Bots() {
           </div>
         )}
 
-        {/* A failed list load must not look like "no bots yet": show the
-            error with a retry instead of the empty state. */}
-        {botsLoadFailed ? (
-          <div style={{ display: 'grid', gap: 12 }}>
-            <Alert variant="error">Не удалось загрузить список ботов.</Alert>
-            <div>
-              <Button variant="secondary" size="sm" onClick={() => refetchBots()}>
-                Повторить
-              </Button>
-            </div>
-          </div>
-        ) : (
+        {/* Loading, failure and real emptiness are separate: a failed or fresh
+            list load must not look like "no bots yet". */}
+        <AsyncState
+          loading={botsLoading}
+          loadingText="Загружаем ботов…"
+          error={botsLoadFailed}
+          errorText="Не удалось загрузить список ботов."
+          onRetry={() => refetchBots()}
+        >
           <Card title={`Список ботов (${bots.length})`}>
             <BotsTable
               bots={bots}
@@ -210,7 +209,7 @@ export default function Bots() {
               }
             />
           </Card>
-        )}
+        </AsyncState>
       </div>
 
       <BotModal

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import clsx from 'clsx'
 import type { ChatMessage } from '../api/client'
+import { AsyncState } from './ui/AsyncState'
 
 /** One presence event rendered as a centered gray system line. */
 export interface ChatPresenceEvent {
@@ -13,6 +14,12 @@ export interface ChatPresenceEvent {
 interface ChatFeedProps {
   messages: ChatMessage[]
   events?: ChatPresenceEvent[]
+  /** The message request is in flight and nothing has been delivered yet. */
+  loading?: boolean
+  /** The message request failed: the feed must say so, not look silently empty. */
+  error?: boolean
+  /** Retriggers the failed message request. */
+  onRetry?: () => void
   /** Visible height of the feed in pixels. */
   height?: number
   className?: string
@@ -86,7 +93,15 @@ function PresenceRow({ event }: { event: ChatPresenceEvent }) {
  * messages are plain, presence transitions are centered system lines.
  * Auto-scrolls to the newest item unless the user scrolled up.
  */
-export function ChatFeed({ messages, events = [], height = 440, className }: ChatFeedProps) {
+export function ChatFeed({
+  messages,
+  events = [],
+  loading = false,
+  error = false,
+  onRetry,
+  height = 440,
+  className,
+}: ChatFeedProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
 
@@ -125,19 +140,33 @@ export function ChatFeed({ messages, events = [], height = 440, className }: Cha
   }, [items])
 
   return (
-    <div ref={listRef} onScroll={handleScroll} className={clsx('chat-feed', className)} style={{ height }}>
-      {items.length === 0 && (
-        <p style={{ margin: 0, textAlign: 'center', fontSize: 13, color: 'var(--muted)' }}>
-          Сообщений пока нет — лента наполнится, когда в чате появятся сообщения
-        </p>
-      )}
-      {items.map((item) =>
-        item.message ? (
-          <MessageRow key={item.key} message={item.message} />
-        ) : item.event ? (
-          <PresenceRow key={item.key} event={item.event} />
-        ) : null,
-      )}
+    <div
+      ref={listRef}
+      onScroll={handleScroll}
+      className={clsx('chat-feed', className)}
+      style={{ height }}
+      aria-live="polite"
+    >
+      <AsyncState
+        loading={loading && items.length === 0}
+        loadingText="Загружаем чат…"
+        error={error && messages.length === 0}
+        errorText="Не удалось получить сообщения чата."
+        onRetry={onRetry}
+      >
+        {items.length === 0 && (
+          <p style={{ margin: 0, textAlign: 'center', fontSize: 13, color: 'var(--muted)' }}>
+            Сообщений пока нет — лента наполнится, когда в чате появятся сообщения
+          </p>
+        )}
+        {items.map((item) =>
+          item.message ? (
+            <MessageRow key={item.key} message={item.message} />
+          ) : item.event ? (
+            <PresenceRow key={item.key} event={item.event} />
+          ) : null,
+        )}
+      </AsyncState>
     </div>
   )
 }

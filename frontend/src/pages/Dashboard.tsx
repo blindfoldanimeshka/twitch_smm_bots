@@ -6,6 +6,7 @@ import { useStreamStatus } from '../hooks/useStreamStatus'
 import { PageHeader } from '../components/layout/PageHeader'
 import { useAppNavigate } from '../components/layout/navigation'
 import { Alert } from '../components/ui/Alert'
+import { AsyncState } from '../components/ui/AsyncState'
 import { Badge, type BadgeTone } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -81,22 +82,37 @@ function presenceBadge(bot: Bot): { tone: BadgeTone; label: string } {
 export default function Dashboard() {
   const navigate = useAppNavigate()
 
-  const { data: bots = [] } = useQuery({
+  const {
+    data: bots = [],
+    isLoading: botsLoading,
+    isError: botsLoadFailed,
+    refetch: refetchBots,
+  } = useQuery({
     queryKey: ['bots'],
     queryFn: async () => (await api.getBots()).data,
   })
 
-  const { data: stats } = useStats()
+  const { data: stats, isError: statsLoadFailed } = useStats()
 
   // Shared ['settings'] cache (same key as the Topbar, which owns the polling;
   // the app-level LiveDataBridge invalidates it when settings change).
-  const { data: settings } = useQuery({
+  const {
+    data: settings,
+    isLoading: settingsLoading,
+    isError: settingsLoadFailed,
+    refetch: refetchSettings,
+  } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => (await api.getSettings()).data,
   })
   const channels = settings?.channels.filter((c) => c.trim() !== '') ?? []
   const channel = channels[0] ?? ''
-  const { data: streamStatus } = useStreamStatus(channel || undefined, channel !== '')
+  const {
+    data: streamStatus,
+    isLoading: streamLoading,
+    isError: streamLoadFailed,
+    refetch: refetchStream,
+  } = useStreamStatus(channel || undefined, channel !== '')
 
   const openRouterKeyMissing = useOpenRouterKeyMissing()
 
@@ -114,15 +130,25 @@ export default function Dashboard() {
       <PageHeader title="Дашборд" description="Сводка по ботам и текущая трансляция" />
 
       <div style={{ display: 'grid', gap: 16 }}>
-        {/* Setup banners are calm hints, not errors. */}
-        {channels.length === 0 && (
-          <SetupBanner
-            tone="info"
-            title="Канал не задан"
-            description="Добавьте Twitch-канал в настройках — без него не видно стрима, зрителей и чата."
-            actionPage="settings"
-          />
-        )}
+        {/* A missing channel is a calm hint, but only once settings really
+            loaded without an error: a failed request must not look like "no
+            channel configured". */}
+        <AsyncState
+          loading={settingsLoading}
+          loadingText="Загружаем настройки…"
+          error={settingsLoadFailed}
+          errorText="Не удалось загрузить настройки — данные канала могли измениться."
+          onRetry={() => refetchSettings()}
+        >
+          {channels.length === 0 && (
+            <SetupBanner
+              tone="info"
+              title="Канал не задан"
+              description="Добавьте Twitch-канал в настройках — без него не видно стрима, зрителей и чата."
+              actionPage="settings"
+            />
+          )}
+        </AsyncState>
         {openRouterKeyMissing && (
           <SetupBanner
             tone="warning"
@@ -133,23 +159,41 @@ export default function Dashboard() {
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-          <StatCard title="Всего ботов" value={stats ? stats.total_bots : '—'} icon={BotIcon} />
+          <StatCard
+            title="Всего ботов"
+            value={stats ? stats.total_bots : '—'}
+            hint={statsLoadFailed ? 'нет данных' : undefined}
+            icon={BotIcon}
+          />
           <StatCard
             title="Запущено"
             value={stats ? stats.running_bots : '—'}
+            hint={statsLoadFailed ? 'нет данных' : undefined}
             icon={Activity}
             tone={stats && stats.running_bots > 0 ? 'success' : 'neutral'}
           />
-          <StatCard title="Сообщений/мин" value={stats ? stats.messages_per_min : '—'} icon={MessageSquare} />
+          <StatCard
+            title="Сообщений/мин"
+            value={stats ? stats.messages_per_min : '—'}
+            hint={statsLoadFailed ? 'нет данных' : undefined}
+            icon={MessageSquare}
+          />
           <StatCard
             title="Зрителей сейчас"
             value={viewersKnown ? streamStatus.viewers_total : '—'}
             icon={Users}
-            hint={channel ? `Канал ${channel}` : 'Канал не задан'}
+            hint={streamLoadFailed ? 'нет данных' : channel ? `Канал ${channel}` : 'Канал не задан'}
           />
         </div>
 
-        <StreamCard status={streamStatus} channel={channel} compact />
+        <StreamCard
+          status={streamStatus}
+          channel={channel}
+          compact
+          isLoading={streamLoading}
+          isError={streamLoadFailed}
+          onRetry={() => refetchStream()}
+        />
 
         <Card
           title="Активные боты"
@@ -179,60 +223,68 @@ export default function Dashboard() {
           <div style={{ display: 'grid', gap: 12 }}>
             {mutationError && <Alert variant="error">{getErrorMessage(mutationError)}</Alert>}
 
-            {bots.length === 0 ? (
-              <EmptyState
-                icon={BotIcon}
-                title="Пока нет ботов"
-                description="Создайте первого бота — он появится в этой таблице."
-                action={<Button onClick={() => navigate('bots')}>Добавить бота</Button>}
-              />
-            ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Имя</th>
-                    <th>Логин</th>
-                    <th>Статус</th>
-                    <th>Действия</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bots.map((bot) => {
-                    const badge = presenceBadge(bot)
-                    return (
-                      <tr key={bot.id}>
-                        <td>{bot.name}</td>
-                        <td>{bot.twitch_login}</td>
-                        <td>
-                          <Badge tone={badge.tone}>{badge.label}</Badge>
-                        </td>
-                        <td>
-                          {isRunning(bot) ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              loading={stopBot.isPending && stopBot.variables === bot.id}
-                              onClick={() => stopBot.mutate(bot.id)}
-                            >
-                              Остановить
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="accent"
-                              size="sm"
-                              loading={startBot.isPending && startBot.variables === bot.id}
-                              onClick={() => startBot.mutate(bot.id)}
-                            >
-                              Запустить
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
+            <AsyncState
+              loading={botsLoading}
+              loadingText="Загружаем ботов…"
+              error={botsLoadFailed}
+              errorText="Не удалось загрузить список ботов."
+              onRetry={() => refetchBots()}
+            >
+              {bots.length === 0 ? (
+                <EmptyState
+                  icon={BotIcon}
+                  title="Пока нет ботов"
+                  description="Создайте первого бота — он появится в этой таблице."
+                  action={<Button onClick={() => navigate('bots')}>Добавить бота</Button>}
+                />
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Имя</th>
+                      <th>Логин</th>
+                      <th>Статус</th>
+                      <th>Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bots.map((bot) => {
+                      const badge = presenceBadge(bot)
+                      return (
+                        <tr key={bot.id}>
+                          <td>{bot.name}</td>
+                          <td>{bot.twitch_login}</td>
+                          <td>
+                            <Badge tone={badge.tone}>{badge.label}</Badge>
+                          </td>
+                          <td>
+                            {isRunning(bot) ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                loading={stopBot.isPending && stopBot.variables === bot.id}
+                                onClick={() => stopBot.mutate(bot.id)}
+                              >
+                                Остановить
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="accent"
+                                size="sm"
+                                loading={startBot.isPending && startBot.variables === bot.id}
+                                onClick={() => startBot.mutate(bot.id)}
+                              >
+                                Запустить
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </AsyncState>
           </div>
         </Card>
       </div>

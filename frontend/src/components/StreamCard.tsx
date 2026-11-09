@@ -62,22 +62,45 @@ interface StreamCardProps {
   channel?: string
   /** Compact variant for the Dashboard: smaller player, fewer metrics. */
   compact?: boolean
+  /** The status request is in flight and there is no data yet. */
+  isLoading?: boolean
+  /** The request itself failed (backend unreachable): an error, not a load. */
+  isError?: boolean
+  /** Retriggers the failed status request. */
+  onRetry?: () => void
   className?: string
 }
 
 /**
  * Stream preview card: 16:9 player (or a neutral placeholder), metrics row and
- * state handling — offline, GQL failure (player stays) and no-channel (CTA).
+ * state handling — loading, request failure (error + retry), GQL failure
+ * (calm warning, player stays), untracked channel and no-channel (CTA).
  */
-export function StreamCard({ status, channel = '', compact = false, className }: StreamCardProps) {
+export function StreamCard({
+  status,
+  channel = '',
+  compact = false,
+  isLoading,
+  isError,
+  onRetry,
+  className,
+}: StreamCardProps) {
   const navigate = useAppNavigate()
 
+  const hasChannel = channel !== ''
+  // The status request failed: the card must say so instead of "loading" forever.
+  const fetchFailed = isError === true
+  // Twitch itself did not answer, but the backend did — a calm warning, the
+  // player stays and the last successful attempt time is shown.
+  const gqlFailed = !fetchFailed && status !== undefined && status.error !== undefined && status.error !== ''
   // The monitor reports `configured: false` (with no error) when the backend
-  // does not track this channel yet — treat that the same as no channel.
-  const hasChannel = channel !== '' && (status === undefined || status.configured)
-  const loading = hasChannel && status === undefined
-  const hasError = hasChannel && status?.error !== undefined && status.error !== ''
-  const isLive = hasChannel && status?.live === true && !hasError
+  // does not track this channel yet — that is neither loading nor offline.
+  const notTracked = !fetchFailed && !gqlFailed && status !== undefined && status.configured === false
+  const loading = hasChannel && !fetchFailed && status === undefined && isLoading !== false
+  const isLive = hasChannel && !fetchFailed && !gqlFailed && !notTracked && status?.live === true
+  // Metrics and the chat badge are meaningless while the data is not live and
+  // something failed: zeros would read as real numbers.
+  const showDetails = hasChannel && status !== undefined && !notTracked && !(fetchFailed || gqlFailed)
 
   const metrics: Array<{ label: string; value: ReactNode }> = [
     { label: 'Uptime', value: isLive && status ? formatUptime(status.uptime_seconds) : '—' },
@@ -111,6 +134,24 @@ export function StreamCard({ status, channel = '', compact = false, className }:
         action={<Button onClick={() => navigate('settings')}>Открыть настройки</Button>}
       />
     )
+  } else if (fetchFailed) {
+    body = (
+      <>
+        {player}
+        <Alert variant="error" title="Не удалось получить данные Twitch">
+          {status
+            ? `Показаны данные на ${formatClock(status.updated_at)} — обновить не удалось.`
+            : 'Сервер не отвечает: статус канала неизвестен.'}
+        </Alert>
+        {onRetry && (
+          <div>
+            <Button variant="secondary" size="sm" onClick={onRetry}>
+              Повторить
+            </Button>
+          </div>
+        )}
+      </>
+    )
   } else if (loading) {
     body = (
       <EmptyState
@@ -118,7 +159,7 @@ export function StreamCard({ status, channel = '', compact = false, className }:
         description="Запрашиваем состояние трансляции у Twitch."
       />
     )
-  } else if (hasError && status) {
+  } else if (gqlFailed && status) {
     // GQL failure: the player stays, the warning is calm and carries the time
     // of the last attempt (the backend stamps `updated_at` before it knows
     // whether the request succeeds) instead of fake zeros.
@@ -129,6 +170,19 @@ export function StreamCard({ status, channel = '', compact = false, className }:
           Метрики появятся, когда Twitch снова ответит. Последняя попытка обновления: {formatClock(status.updated_at)}.
         </Alert>
       </>
+    )
+  } else if (notTracked) {
+    body = (
+      <EmptyState
+        icon={MonitorOff}
+        title="Канал не отслеживается"
+        description="Сервер не следит за этим каналом — проверьте список каналов в настройках."
+        action={
+          <Button variant="secondary" onClick={() => navigate('settings')}>
+            Открыть настройки
+          </Button>
+        }
+      />
     )
   } else if (!isLive) {
     body = (
@@ -159,7 +213,7 @@ export function StreamCard({ status, channel = '', compact = false, className }:
       title="Трансляция"
       subtitle={hasChannel ? `Канал ${channel}` : undefined}
       actions={
-        hasChannel && status !== undefined ? (
+        showDetails && status ? (
           <Badge tone={status.chat_connected ? 'success' : 'neutral'}>
             {status.chat_connected ? 'Чат: подключён' : 'Чат: не подключён'}
           </Badge>
@@ -168,7 +222,7 @@ export function StreamCard({ status, channel = '', compact = false, className }:
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {body}
-        {hasChannel && status !== undefined && (
+        {showDetails && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
             {metrics.map((metric) => (
               <Metric key={metric.label} label={metric.label} value={metric.value} />
