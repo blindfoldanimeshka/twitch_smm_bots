@@ -47,18 +47,26 @@ export function Topbar({ title, onNavigate }: TopbarProps) {
     refetchInterval: 60_000,
   })
 
-  // Missing key is a configuration problem (amber), not a connection error.
-  const keyMissing = settings
-    ? settings.llm_api_key_set === false || settings.llm_api_key_source === 'none'
-    : false
+  // Red requires certainty: settings must be loaded AND a key must be present.
+  // While settings are loading (or their request failed, leaving `settings`
+  // undefined) the chip stays neutral: a status check without a configured
+  // key reports `available: false`, which must not flash red.
+  const hasKey =
+    settings !== undefined &&
+    settings.llm_api_key_set !== false &&
+    settings.llm_api_key_source !== 'none'
 
   let openRouter: ChipState
-  if (keyMissing) {
+  if (settings === undefined) {
+    openRouter = { tone: 'neutral', label: 'OpenRouter: …' }
+  } else if (!hasKey) {
+    // Missing key is a configuration problem (amber), not a connection
+    // error — even when the status check reports `available: false`.
     openRouter = { tone: 'warning', label: 'OpenRouter: ключ не задан' }
   } else if (llmStatus?.available) {
     openRouter = { tone: 'success', label: 'OpenRouter: подключён' }
   } else if (llmStatus) {
-    // The backend performed a real check and it failed (auth/network).
+    // A key is present and the backend's real check failed (auth/network).
     openRouter = { tone: 'error', label: 'OpenRouter: ошибка' }
   } else {
     openRouter = { tone: 'neutral', label: 'OpenRouter: …' }
