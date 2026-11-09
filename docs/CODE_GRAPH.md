@@ -180,7 +180,7 @@ App.tsx
 | UI kit | `frontend/src/components/ui/*` | Card/Button/Input/Modal/Badge/Alert |
 
 Старые визуальные компоненты (PixelSnow, TargetCursor, Dock, BGPattern,
-GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удаляются планом.
+GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удалены.
 
 ## 7. Данные
 

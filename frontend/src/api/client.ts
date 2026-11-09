@@ -124,14 +124,6 @@ export interface BotLogEntry {
   created_at: string;
 }
 
-export interface SettingsLogEntry {
-  id?: number;
-  level: string;
-  message: string;
-  changes?: Record<string, any>;
-  created_at: string;
-}
-
 export interface Chatter {
   login: string;
   last_message_at: string;
@@ -235,8 +227,4 @@ export const api = {
   // Bot Logs
   getBotLogs: (botId: string, limit: number = 100) =>
     client.get<BotLogEntry[]>(`/api/bots/${botId}/logs?limit=${limit}`),
-
-  // Settings Logs
-  getSettingsLogs: (limit: number = 50) =>
-    client.get<SettingsLogEntry[]>(`/api/settings/logs?limit=${limit}`),
 };

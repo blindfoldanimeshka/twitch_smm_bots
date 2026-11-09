@@ -16,16 +16,26 @@ files, key symbols, data flows, invariants, and common commands.
 ## Project Structure
 ```
 twitchSmm/
-├── frontend/          # React frontend
+├── frontend/          # React frontend: light UI, four sections (Dashboard, Stream, Bots, Settings)
 ├── internal/          # Go backend code
 │   ├── api/          # HTTP handlers
 │   ├── llm/          # OpenRouter client and config resolution
 │   ├── audio/        # stream capture and whisper.cpp transcription
+│   ├── twitch/       # public GQL client, read-only IRC monitor, stream monitor
 │   └── storage/      # Database layer
 ├── models/           # local whisper.cpp models (gitignored)
 ├── db/               # Database migrations
 └── docker-compose.yml
 ```
+
+### Frontend layout
+- `src/App.tsx` — app shell (Sidebar + Topbar), four pages, WebSocketProvider, ErrorBoundary
+- `src/pages/` — `Dashboard`, `Stream`, `Bots`, `Settings` (the only sections; no routing library)
+- `src/components/layout/` — `Sidebar`, `Topbar`, `PageHeader`
+- `src/components/ui/` — design primitives (`Card`, `Button`, `Input`, `Modal`, `Badge`, `Alert`, ...)
+- `src/api/client.ts` — axios client, API types, `X-API-Key`
+- `src/hooks/useWebSocket.ts` — single WS connection, reconnect, log store
+- Legacy visual components (Dock, PixelSnow, TargetCursor, GooeyNav, FloatingPanel, StatusBar, ...) were removed; do not reintroduce them.
 
 ## Development Guidelines
 
@@ -45,11 +55,14 @@ twitchSmm/
 - Verify Docker builds before committing
 
 ## Key Features
-1. Multi-bot management
+1. Multi-bot management (table, add/edit modal, per-bot logs)
 2. LLM-powered responses via OpenRouter (free-first, paid fallback)
-3. Real-time chat monitoring
-4. Settings management
-5. Statistics dashboard
+3. Stream monitoring: public Twitch GraphQL for status/viewers + anonymous read-only IRC monitor for active viewers and the chat feed. The public GQL endpoint is unofficial and undocumented — it may change or get blocked; the UI then shows "no data". Plan a later migration to Helix with a Client ID.
+4. Presence simulation: random session/cooldown ranges with greeting and farewell messages. It only connects to IRC and sends chat messages; it never inflates `viewer_count` and is not viewbotting.
+5. Settings management
+6. Four-section light UI: Dashboard, Stream, Bots, Settings
+
+Channel rotation was removed from UI and runtime; `rotation_enabled`/`rotation_interval` stay in the DB for compatibility but are unused.
 
 ## Important Notes
 - `OPENROUTER_API_KEY` is optional at startup; without it the API reports LLM unavailable
