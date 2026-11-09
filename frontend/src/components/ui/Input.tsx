@@ -10,6 +10,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 export function Input({ label, error, id, className, ...rest }: InputProps) {
   const autoId = useId()
   const inputId = id ?? autoId
+  const errorId = `${autoId}-error`
 
   return (
     <div className="field">
@@ -18,8 +19,13 @@ export function Input({ label, error, id, className, ...rest }: InputProps) {
           {label}
         </label>
       )}
-      <input id={inputId} className={clsx('input', error && 'input--error', className)} {...rest} />
-      {error && <span className="field__error">{error}</span>}
+      <input
+        id={inputId}
+        className={clsx('input', error && 'input--error', className)}
+        {...rest}
+        {...(error ? { 'aria-invalid': true, 'aria-describedby': errorId } : null)}
+      />
+      {error && <span id={errorId} className="field__error">{error}</span>}
     </div>
   )
 }

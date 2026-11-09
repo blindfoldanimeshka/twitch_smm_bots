@@ -26,6 +26,7 @@ export function Button({
       className={clsx('btn', `btn--${variant}`, `btn--${size}`, className)}
       disabled={disabled || loading}
       {...rest}
+      {...(loading ? { 'aria-busy': true } : null)}
     >
       {loading && <span className="btn__spinner" aria-hidden="true" />}
       {children}

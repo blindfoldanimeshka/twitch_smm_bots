@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ScrollText, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api/client'
 import type { Bot, BotLogEntry } from '../api/client'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import { Alert } from './ui/Alert'
 import { Badge, type BadgeTone } from './ui/Badge'
 import { EmptyState } from './ui/EmptyState'
@@ -39,6 +40,8 @@ function formatTime(entry: BotLogEntry): string {
 /** Right-side drawer with the last 100 log entries of a bot. */
 export function BotLogsDrawer({ bot, onClose }: BotLogsDrawerProps) {
   const open = bot !== null
+  const drawerRef = useRef<HTMLElement>(null)
+  useFocusTrap(drawerRef, open)
 
   const { data: logs = [], isLoading, error } = useQuery({
     queryKey: ['bot-logs', bot?.id],
@@ -73,6 +76,7 @@ export function BotLogsDrawer({ bot, onClose }: BotLogsDrawerProps) {
       }}
     >
       <aside
+        ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-label={`Логи бота ${bot.name}`}

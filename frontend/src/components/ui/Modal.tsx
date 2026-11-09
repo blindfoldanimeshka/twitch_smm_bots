@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 
 interface ModalProps {
   open: boolean
@@ -13,6 +14,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, footer, width = 560 }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  useFocusTrap(dialogRef, open)
+
   useEffect(() => {
     if (!open) {
       return
@@ -39,9 +44,16 @@ export function Modal({ open, onClose, title, children, footer, width = 560 }: M
         }
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" style={{ maxWidth: width }}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={{ maxWidth: width }}
+      >
         <header className="modal__header">
-          <h3 className="modal__title">{title}</h3>
+          <h3 id={titleId} className="modal__title">{title}</h3>
           <button type="button" className="modal__close" onClick={onClose} aria-label="Закрыть">
             <X size={18} aria-hidden="true" />
           </button>
