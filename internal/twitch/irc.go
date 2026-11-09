@@ -171,21 +171,28 @@ func (c *IRCClient) Close() {
 	c.closeLocked()
 }
 
-// P0-2: Check if rate limited and sleep if needed
+// P0-2: Check if rate limited and sleep if needed. The sleep happens without
+// holding c.mu, so Close/IsRateLimited/SendMessage are not blocked while the
+// client waits out a rate limit.
 func (c *IRCClient) WaitForRateLimit() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.rateLimited {
+		c.mu.Unlock()
 		return
 	}
+	until := c.rateLimitUntil
+	c.mu.Unlock()
 
-	now := time.Now()
-	if now.Before(c.rateLimitUntil) {
-		sleepDuration := time.Until(c.rateLimitUntil)
-		log.Printf("[IRC %s] Rate limited, sleeping for %v", c.login, sleepDuration)
-		time.Sleep(sleepDuration)
-		// Reset after waiting
+	if d := time.Until(until); d > 0 {
+		log.Printf("[IRC %s] Rate limited, sleeping for %v", c.login, d)
+		time.Sleep(d)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Reset only if the limit we waited out is still the current one; if a new
+	// backoff was scheduled while we slept, leave it in place.
+	if !time.Now().Before(c.rateLimitUntil) {
 		c.rateLimited = false
 		c.backoffAttempts = 0
 	}

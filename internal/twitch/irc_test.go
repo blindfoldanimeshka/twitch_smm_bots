@@ -123,6 +123,39 @@ func TestWaitForRateLimit(t *testing.T) {
 	}
 }
 
+// TestWaitForRateLimitDoesNotHoldLock verifies that the rate-limit sleep does
+// not keep c.mu locked: while the client is sleeping, other goroutines (Close,
+// IsRateLimited, SendMessage) must be able to take the lock.
+func TestWaitForRateLimitDoesNotHoldLock(t *testing.T) {
+	client := NewIRCClient("testlogin", "pass", "testchannel")
+
+	client.mu.Lock()
+	client.rateLimited = true
+	client.rateLimitUntil = time.Now().Add(time.Second)
+	client.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		client.WaitForRateLimit()
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	start := time.Now()
+	client.mu.Lock()
+	client.mu.Unlock()
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("mutex held during rate-limit sleep: lock acquisition took %v", elapsed)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("WaitForRateLimit did not return")
+	}
+}
+
 // TestConcurrentRateLimit tests concurrent access to rate limit methods
 func TestConcurrentRateLimit(t *testing.T) {
 	client := NewIRCClient("testlogin", "pass", "testchannel")
