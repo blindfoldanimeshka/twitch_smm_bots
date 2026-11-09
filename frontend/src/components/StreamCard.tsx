@@ -140,7 +140,7 @@ export function StreamCard({
         {player}
         <Alert variant="error" title="Не удалось получить данные Twitch">
           {status
-            ? `Показаны данные на ${formatClock(status.updated_at)} — обновить не удалось.`
+            ? `Обновить не удалось. Последняя попытка: ${formatClock(status.updated_at)}.`
             : 'Сервер не отвечает: статус канала неизвестен.'}
         </Alert>
         {onRetry && (

@@ -112,6 +112,42 @@ function settingsFormEqual(a: SettingsType, b: SettingsType): boolean {
 }
 
 /**
+ * The form right after a save succeeded. `payload` is exactly what the server
+ * accepted, so a field the user has not touched since the click snaps to its
+ * saved shape, while anything typed mid-flight stays untouched (and keeps
+ * `dirty` on) until it is saved too.
+ * - channels: displayed trimmed/deduped, with one blank row kept as the shape
+ *   of an intentionally empty list — saving zero channels clears `dirty`;
+ * - max_tokens: replaced by the saved clamp only when the current input still
+ *   clamps to it, so a half-typed value that would save differently stays;
+ * - both write-only secrets: cleared only when unchanged since the click,
+ *   because the server never echoes them back.
+ */
+function reconcileAfterSave(form: SettingsType, payload: SettingsType): SettingsType {
+  const currentChannels = form.channels.map((c) => c.trim()).filter((c) => c !== '')
+  const channelsSaved =
+    currentChannels.length === payload.channels.length &&
+    currentChannels.every((name, index) => name === payload.channels[index])
+
+  return {
+    ...form,
+    channels: channelsSaved
+      ? payload.channels.length > 0
+        ? payload.channels
+        : ['']
+      : form.channels,
+    max_tokens:
+      clampMaxTokensValue(form.max_tokens) === payload.max_tokens
+        ? payload.max_tokens
+        : form.max_tokens,
+    llm_api_key: form.llm_api_key === payload.llm_api_key ? '' : form.llm_api_key,
+    twitch_client_secret:
+      form.twitch_client_secret === payload.twitch_client_secret ? '' : form.twitch_client_secret,
+    updated_at: payload.updated_at,
+  }
+}
+
+/**
  * Parse a token-limit keystroke without normalizing it: mid-typing values
  * (like the "5" of "50") must reach the DOM untouched. null = ignore this
  * input (empty or garbage) and keep the previous value.
@@ -250,24 +286,27 @@ export default function Settings() {
     mutationFn: (data: SettingsType) => api.updateSettings(data),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      // What we just sent is now the server truth: rebase the baseline onto
-      // its normalized shape (trim/drop empty channels, clamped token limit)
-      // so `dirty` clears and background sync works again. The form was
-      // already aligned with the payload in handleSave, so nothing is
-      // overwritten here except the now-saved API key — and only when the
-      // user has not edited it since the click. Edits made mid-flight stay.
+      // What we just sent is now the server truth: the baseline is rebased onto
+      // its normalized shape (trim/drop empty channels, clamped token limit) so
+      // `dirty` clears and background sync works again. Both write-only secrets
+      // are blanked in the baseline — GET never returns them, so keeping the
+      // just-saved one there would hold `dirty` on forever.
       const normalized = normalizeSettings(variables)
-      const savedMaxTokens = clampMaxTokensValue(normalized.max_tokens)
-      setBaseline({ ...normalized, max_tokens: savedMaxTokens })
-      setFormState((prev) => ({
-        ...prev,
-        llm_api_key: prev.llm_api_key === variables.llm_api_key ? '' : prev.llm_api_key,
-      }))
+      setBaseline({
+        ...normalized,
+        max_tokens: clampMaxTokensValue(normalized.max_tokens),
+        twitch_client_secret: '',
+      })
+      // The form is reconciled against the same payload: untouched fields snap to
+      // the saved shape, edits made while the request was in flight stay put.
+      setFormState((prev) => reconcileAfterSave(prev, variables))
       setSaveError(null)
       setSaveSuccess(true)
       window.setTimeout(() => setSaveSuccess(false), 4000)
     },
     onError: (error) => {
+      // A failed save changes nothing on the server: form and baseline stay as
+      // they are, so `dirty` keeps the unsaved edits visible and retryable.
       setSaveSuccess(false)
       setSaveError(getErrorMessage(error))
       window.setTimeout(() => setSaveError(null), 6000)
@@ -338,12 +377,9 @@ export default function Settings() {
       max_tokens: clampMaxTokensValue(formState.max_tokens),
       updated_at: new Date().toISOString(),
     }
-    // The form must show exactly what was sent: onSuccess then only rebases
-    // the baseline, and anything typed after this click stays untouched.
-    // An empty channel list keeps the display shape — one blank row, the very
-    // fallback normalizeSettings uses for the baseline — so saving zero
-    // channels clears `dirty` instead of staying dirty as [] vs [''].
-    setFormState({ ...payload, channels: sentChannels.length > 0 ? sentChannels : [''] })
+    // The form is left exactly as the user typed it: normalizing it here would
+    // make a whitespace-only edit look saved even if this request fails.
+    // onSuccess reconciles it against this payload once the server has it.
     updateSettingsMutation.mutate(payload)
   }
 
@@ -757,10 +793,13 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* The audio test records what the backend is analysing right now, so it
+          is the saved channel that matters: an unsaved edit in the form must
+          not point the modal at a channel the bots have not joined. */}
       <AudioTestModal
         isOpen={audioModalOpen}
         onClose={() => setAudioModalOpen(false)}
-        channel={formState.channels.map((c) => c.trim()).find(Boolean) ?? ''}
+        channel={settings.channels.map((c) => c.trim()).find(Boolean) ?? ''}
       />
     </>
   )

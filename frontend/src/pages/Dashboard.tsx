@@ -131,6 +131,10 @@ export default function Dashboard() {
   // or it failed, so nothing here may claim "Канал не задан".
   const settingsPending = !settings && (settingsLoading || settingsLoadFailed)
 
+  // A failed refresh leaves the last good numbers on screen (react-query keeps
+  // them), so the hint has to say the data is stale, not that there is none.
+  const statsHint = statsLoadFailed ? (stats ? 'данные не обновляются' : 'нет данных') : undefined
+
   return (
     <>
       <PageHeader title="Дашборд" description="Сводка по ботам и текущая трансляция" />
@@ -169,20 +173,20 @@ export default function Dashboard() {
           <StatCard
             title="Всего ботов"
             value={stats ? stats.total_bots : '—'}
-            hint={statsLoadFailed ? 'нет данных' : undefined}
+            hint={statsHint}
             icon={BotIcon}
           />
           <StatCard
             title="Запущено"
             value={stats ? stats.running_bots : '—'}
-            hint={statsLoadFailed ? 'нет данных' : undefined}
+            hint={statsHint}
             icon={Activity}
             tone={stats && stats.running_bots > 0 ? 'success' : 'neutral'}
           />
           <StatCard
             title="Сообщений/мин"
             value={stats ? stats.messages_per_min : '—'}
-            hint={statsLoadFailed ? 'нет данных' : undefined}
+            hint={statsHint}
             icon={MessageSquare}
           />
           <StatCard
@@ -206,9 +210,11 @@ export default function Dashboard() {
             failed background poll still render the card. */}
         {settingsPending ? (
           <Card title="Трансляция">
+            {/* The settings sentence belongs to the banner above: the card only
+                needs a neutral placeholder so the same text is not read twice. */}
             <AsyncState
               loading={settingsLoading}
-              loadingText="Загружаем настройки…"
+              loadingText="…"
               error={settingsLoadFailed}
               errorText="Не удалось получить данные канала — трансляция недоступна."
               onRetry={() => refetchSettings()}
