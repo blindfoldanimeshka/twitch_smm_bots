@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { config } from '../config';
 
+export type BotPresenceState = 'online' | 'cooldown' | 'stopped' | 'error';
+
 export interface Bot {
   id: string;
   twitch_login: string;
@@ -13,6 +15,9 @@ export interface Bot {
   status: string;
   proxy_id?: string;
   auto_rotate_proxy: boolean;
+  presence_state: BotPresenceState;
+  session_ends_at?: string;
+  cooldown_until?: string;
 }
 
 export interface CreateBotRequest {
@@ -79,6 +84,13 @@ export interface Settings {
   llm_api_key_source: 'env' | 'database' | 'none';
   twitch_client_id: string;
   twitch_client_secret: string;
+  presence_enabled: boolean;
+  presence_session_min_minutes: number;
+  presence_session_max_minutes: number;
+  presence_cooldown_min_minutes: number;
+  presence_cooldown_max_minutes: number;
+  presence_greeting_enabled: boolean;
+  presence_farewell_enabled: boolean;
   updated_at: string;
 }
 
@@ -120,6 +132,37 @@ export interface SettingsLogEntry {
   created_at: string;
 }
 
+export interface Chatter {
+  login: string;
+  last_message_at: string;
+}
+
+export interface ChatMessage {
+  login: string;
+  text: string;
+  at: string;
+  is_bot: boolean;
+}
+
+export interface StreamStatus {
+  configured: boolean;
+  channel: string;
+  live: boolean;
+  title: string;
+  game: string;
+  started_at?: string;
+  uptime_seconds: number;
+  viewers_total: number;
+  active_viewers: number;
+  passive_viewers: number;
+  active_window_seconds: number;
+  chat_connected: boolean;
+  chatters: Chatter[];
+  messages: ChatMessage[];
+  updated_at: string;
+  error?: string;
+}
+
 const client = axios.create({
   baseURL: config.apiUrl,
   headers: {
@@ -128,39 +171,32 @@ const client = axios.create({
   },
 });
 
-// Логирование запросов
-client.interceptors.request.use(
-  (config) => {
-    console.log(`🌐 [API REQUEST] ${config.method?.toUpperCase()} ${config.url}`, {
-      data: config.data,
-      headers: config.headers,
-    });
-    return config;
-  },
-  (error) => {
-    console.error('❌ [API REQUEST ERROR]', error);
-    return Promise.reject(error);
+// Converts any thrown error into a user-facing Russian message.
+// Never exposes response bodies, headers or stack traces: they may
+// contain OAuth tokens and other secrets.
+export function getErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    if (!error.response) {
+      return 'Ошибка сети: не удалось подключиться к серверу';
+    }
+    switch (error.response.status) {
+      case 401:
+        return 'Ошибка авторизации: неверный или отсутствующий API-ключ';
+      case 403:
+        return 'Доступ запрещён';
+      case 404:
+        return 'Ресурс не найден';
+      case 500:
+        return 'Внутренняя ошибка сервера';
+      default:
+        return `Ошибка запроса (код ${error.response.status})`;
+    }
   }
-);
-
-// Логирование ответов
-client.interceptors.response.use(
-  (response) => {
-    console.log(`✅ [API RESPONSE] ${response.config.method?.toUpperCase()} ${response.config.url}`, {
-      status: response.status,
-      data: response.data,
-    });
-    return response;
-  },
-  (error) => {
-    console.error(`❌ [API ERROR] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message,
-    });
-    return Promise.reject(error);
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
-);
+  return 'Неизвестная ошибка';
+}
 
 export const api = {
   // Bots
@@ -184,6 +220,10 @@ export const api = {
 
   // Stats
   getStats: () => client.get<Stats>('/api/stats'),
+
+  // Twitch stream status
+  getStreamStatus: (channel?: string) =>
+    client.get<StreamStatus>('/api/twitch/stream', { params: channel ? { channel } : {} }),
 
   // Settings
   getSettings: () => client.get<Settings>('/api/settings'),

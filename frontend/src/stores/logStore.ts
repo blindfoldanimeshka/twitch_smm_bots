@@ -18,6 +18,13 @@ export interface SettingsLogEntry {
   timestamp: Date
 }
 
+export interface PresenceEvent {
+  bot_id: string
+  login: string
+  state: 'online' | 'cooldown' | 'stopped' | 'error' | string
+  at: string
+}
+
 interface LogStore {
   // Bot logs: Map<botId, LogEntry[]>
   botLogs: Map<string, LogEntry[]>
@@ -33,6 +40,8 @@ interface LogStore {
   addSettingsLog: (log: SettingsLogEntry) => void
   setSettingsLogs: (logs: SettingsLogEntry[]) => void
   clearSettingsLogs: () => void
+
+  addPresenceEvent: (event: PresenceEvent) => void
 }
 
 export const useLogStore = create<LogStore>((set) => ({
@@ -81,4 +90,28 @@ export const useLogStore = create<LogStore>((set) => ({
   setSettingsLogs: (logs) => set({ settingsLogs: logs }),
 
   clearSettingsLogs: () => set({ settingsLogs: [] }),
+
+  addPresenceEvent: (event) => set((state) => {
+    const botId = event.bot_id || ''
+    const newBotLogs = new Map(state.botLogs)
+    const existingLogs = newBotLogs.get(botId) || []
+
+    const entry: LogEntry = {
+      botId,
+      logType: 'presence',
+      level: 'info',
+      message: `Присутствие: ${event.login} — ${event.state}`,
+      context: { login: event.login, state: event.state },
+      timestamp: new Date(event.at || Date.now()),
+    }
+
+    // Add new event at the beginning (newest first), same cap as bot logs
+    const updatedLogs = [entry, ...existingLogs]
+    if (updatedLogs.length > 100) {
+      updatedLogs.splice(100)
+    }
+
+    newBotLogs.set(botId, updatedLogs)
+    return { botLogs: newBotLogs }
+  }),
 }))
