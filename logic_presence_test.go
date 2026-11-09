@@ -353,9 +353,9 @@ func TestDisablePresenceCancelsCooldown(t *testing.T) {
 }
 
 // TestPauseBotEntersCooldown verifies pauseBot parks an online bot in
-// cooldown, sends and records a farewell, waits for the old loop to exit
-// before scheduling the return, and that the captured restart callback starts
-// the bot exactly once.
+// cooldown, sends a farewell (without counting it in messages_per_min), waits
+// for the old loop to exit before scheduling the return, and that the captured
+// restart callback starts the bot exactly once.
 func TestPauseBotEntersCooldown(t *testing.T) {
 	bm, fakeAfter := newPresenceTestManager(t)
 
@@ -429,8 +429,9 @@ func TestPauseBotEntersCooldown(t *testing.T) {
 	assert.True(t, cooldownUntil.After(time.Now()), "cooldownUntil must be in the future")
 	assert.False(t, fake.IsConnected(), "client must be closed after the farewell")
 
-	// Farewell recorded: exactly one send counted (greeting disabled here).
-	assert.Equal(t, 1, bm.MessagesPerMin())
+	// Farewell sent but not counted: presence phrases stay out of
+	// messages_per_min (greeting disabled here too).
+	assert.Equal(t, 0, bm.MessagesPerMin())
 	sent := fake.SentMessages()
 	require.Len(t, sent, 1)
 	assert.True(t, containsCyrillic(sent[0]), "farewell must be a Russian phrase")
@@ -458,4 +459,33 @@ func TestPauseBotEntersCooldown(t *testing.T) {
 
 	// Cleanup: stop the restarted loop and any pending session timer.
 	require.NoError(t, bm.stopBot("bot-1", false))
+}
+
+// TestPresenceGreetingNotCountedInMessagesPerMin verifies that the greeting is
+// still sent but does not inflate the generation-activity metric.
+func TestPresenceGreetingNotCountedInMessagesPerMin(t *testing.T) {
+	bm := newBotManager(nil, nil, nil, nil, context.Background(), "testchannel", 0, audio.Config{}, false, nil)
+	bm.presence = presenceConfig{
+		enabled:     true,
+		greeting:    true,
+		sessionMin:  time.Minute,
+		sessionMax:  time.Minute,
+		cooldownMin: time.Minute,
+		cooldownMax: time.Minute,
+	}
+	bm.presenceAfter = func(time.Duration, func()) presenceTimer { return &fakePresenceTimer{} }
+
+	fake := newFakeTwitchClient()
+	bm.mu.Lock()
+	bm.bots["bot-1"] = &botRuntime{
+		cfg:     storage.BotConfig{ID: "bot-1", Personality: "нейтрал"},
+		client:  fake,
+		running: true,
+	}
+	bm.mu.Unlock()
+
+	bm.beginPresenceSession("bot-1", false)
+
+	require.Len(t, fake.SentMessages(), 1, "greeting must still be sent")
+	assert.Equal(t, 0, bm.MessagesPerMin(), "presence phrase must not count as generation activity")
 }

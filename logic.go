@@ -871,13 +871,12 @@ func (bm *botManager) beginPresenceSession(botID string, disableLLM bool) {
 	bm.mu.Unlock()
 
 	// Greeting message: presence only ever sends via IRC and never touches
-	// viewer counts.
+	// viewer counts. Presence phrases are deliberately not counted in
+	// messages_per_min: that metric tracks generation-loop activity only.
 	if greetingEnabled {
 		msg := randomPresencePhrase(personality, presenceGreeting)
 		if err := client.SendMessage(msg); err != nil {
 			slog.Warn("presence greeting send failed", "bot_id", botID, "debug_mode", debugMode, "error", err)
-		} else {
-			bm.recordMessageSent()
 		}
 	}
 }
@@ -920,13 +919,12 @@ func (bm *botManager) pauseBot(botID string) {
 	bm.broadcastPresence(br)
 
 	// Farewell before the client is closed; network I/O must not happen
-	// while bm.mu is held.
+	// while bm.mu is held. Like the greeting, the farewell is not counted
+	// in messages_per_min.
 	if farewellEnabled {
 		msg := randomPresencePhrase(personality, presenceFarewell)
 		if err := client.SendMessage(msg); err != nil {
 			slog.Warn("presence farewell send failed", "bot_id", botID, "error", err)
-		} else {
-			bm.recordMessageSent()
 		}
 	}
 	client.Close()
