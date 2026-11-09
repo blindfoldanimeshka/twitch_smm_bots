@@ -96,7 +96,16 @@ function connect(): void {
     return; // connecting or already open
   }
 
-  const ws = new WebSocket(`${config.wsUrl}/api/ws?api_key=${config.apiKey}`);
+  // The constructor throws synchronously on an invalid or blocked URL. Catch
+  // it and use the same backoff as a dropped connection; the error must not
+  // escape into the caller's render/effect path.
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(`${config.wsUrl}/api/ws?api_key=${config.apiKey}`);
+  } catch {
+    scheduleReconnect();
+    return;
+  }
   socket = ws;
 
   ws.onopen = () => {

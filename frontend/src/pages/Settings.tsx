@@ -98,11 +98,13 @@ export default function Settings() {
     llm_api_key_source: 'none',
     twitch_client_id: '',
     twitch_client_secret: '',
-    presence_enabled: false,
+    // Mirrors the backend column defaults: a transient load failure must never
+    // be the reason the form silently flips presence off or edits fake ranges.
+    presence_enabled: true,
     presence_session_min_minutes: 20,
-    presence_session_max_minutes: 45,
+    presence_session_max_minutes: 40,
     presence_cooldown_min_minutes: 10,
-    presence_cooldown_max_minutes: 30,
+    presence_cooldown_max_minutes: 20,
     presence_greeting_enabled: true,
     presence_farewell_enabled: true,
     updated_at: '',
@@ -112,7 +114,12 @@ export default function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveBlocked, setSaveBlocked] = useState<string | null>(null)
 
-  const { data: settings, isLoading } = useQuery({
+  const {
+    data: settings,
+    isLoading,
+    isError: settingsLoadFailed,
+    refetch: refetchSettings,
+  } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => (await api.getSettings()).data,
   })
@@ -156,11 +163,11 @@ export default function Settings() {
       llm_api_key_source: settings.llm_api_key_source ?? 'none',
       twitch_client_id: settings.twitch_client_id ?? '',
       twitch_client_secret: settings.twitch_client_secret ?? '',
-      presence_enabled: settings.presence_enabled ?? false,
+      presence_enabled: settings.presence_enabled ?? true,
       presence_session_min_minutes: settings.presence_session_min_minutes ?? 20,
-      presence_session_max_minutes: settings.presence_session_max_minutes ?? 45,
+      presence_session_max_minutes: settings.presence_session_max_minutes ?? 40,
       presence_cooldown_min_minutes: settings.presence_cooldown_min_minutes ?? 10,
-      presence_cooldown_max_minutes: settings.presence_cooldown_max_minutes ?? 30,
+      presence_cooldown_max_minutes: settings.presence_cooldown_max_minutes ?? 20,
       presence_greeting_enabled: settings.presence_greeting_enabled ?? true,
       presence_farewell_enabled: settings.presence_farewell_enabled ?? true,
       updated_at: settings.updated_at ?? '',
@@ -245,7 +252,29 @@ export default function Settings() {
     })
   }
 
-  if (isLoading) {
+  // All hooks run unconditionally above; everything below may return early.
+  if (settingsLoadFailed) {
+    return (
+      <>
+        <PageHeader
+          title="Настройки"
+          description="Каналы, мониторинг Twitch, LLM, аудио и поведение ботов"
+        />
+        <div style={GRID_STYLE}>
+          <Alert variant="error">Не удалось загрузить настройки.</Alert>
+          <div>
+            <Button variant="secondary" size="sm" onClick={() => refetchSettings()}>
+              Повторить
+            </Button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // No editable defaults on screen until real settings arrive: saving the
+  // fallback literal would wipe the stored configuration.
+  if (isLoading || !settings) {
     return <p style={{ color: 'var(--muted)' }}>Загрузка настроек…</p>
   }
 

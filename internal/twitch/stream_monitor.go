@@ -206,6 +206,12 @@ func (m *StreamMonitor) Snapshot(ctx context.Context, channel string, excludeLog
 		}
 		return status
 	}
+	// A provider that returns (nil, nil) means "no usable data": report a safe
+	// error instead of panicking on the nil dereference below.
+	if err == nil && info == nil {
+		status.Error = "twitch unavailable"
+		return status
+	}
 	if !info.Live {
 		return status
 	}

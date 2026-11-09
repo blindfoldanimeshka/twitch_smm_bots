@@ -22,7 +22,11 @@ export default function Bots() {
   const [logsBot, setLogsBot] = useState<Bot | null>(null)
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set())
 
-  const { data: bots = [] } = useQuery({
+  const {
+    data: bots = [],
+    isError: botsLoadFailed,
+    refetch: refetchBots,
+  } = useQuery({
     queryKey: ['bots'],
     queryFn: async () => (await api.getBots()).data,
   })
@@ -178,22 +182,35 @@ export default function Bots() {
           </div>
         )}
 
-        <Card title={`Список ботов (${bots.length})`}>
-          <BotsTable
-            bots={bots}
-            pendingIds={pendingIds}
-            onStart={handleStart}
-            onStop={handleStop}
-            onEdit={openEdit}
-            onDelete={setDeletingBot}
-            onShowLogs={setLogsBot}
-            emptyAction={
-              <Button variant="accent" onClick={openCreate}>
-                Добавить бота
+        {/* A failed list load must not look like "no bots yet": show the
+            error with a retry instead of the empty state. */}
+        {botsLoadFailed ? (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <Alert variant="error">Не удалось загрузить список ботов.</Alert>
+            <div>
+              <Button variant="secondary" size="sm" onClick={() => refetchBots()}>
+                Повторить
               </Button>
-            }
-          />
-        </Card>
+            </div>
+          </div>
+        ) : (
+          <Card title={`Список ботов (${bots.length})`}>
+            <BotsTable
+              bots={bots}
+              pendingIds={pendingIds}
+              onStart={handleStart}
+              onStop={handleStop}
+              onEdit={openEdit}
+              onDelete={setDeletingBot}
+              onShowLogs={setLogsBot}
+              emptyAction={
+                <Button variant="accent" onClick={openCreate}>
+                  Добавить бота
+                </Button>
+              }
+            />
+          </Card>
+        )}
       </div>
 
       <BotModal

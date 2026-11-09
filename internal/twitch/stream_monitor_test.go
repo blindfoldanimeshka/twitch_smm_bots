@@ -140,6 +140,24 @@ func TestStreamMonitorProviderError(t *testing.T) {
 	assert.NotContains(t, status.Error, "raw response body", "error must be a short safe string")
 }
 
+// TestStreamMonitorNilInfo is the regression test for a provider returning
+// (nil, nil): Snapshot must report a safe error string instead of panicking
+// on the nil dereference.
+func TestStreamMonitorNilInfo(t *testing.T) {
+	public := &fakeStreamProvider{} // GetStream returns (nil, nil)
+	mon, _ := newFakeMonitor(public, nil)
+	mon.SetChannels([]string{"a"})
+
+	var status StreamStatus
+	assert.NotPanics(t, func() {
+		status = mon.Snapshot(context.Background(), "", nil)
+	})
+
+	assert.True(t, status.Configured)
+	assert.NotEmpty(t, status.Error, "nil info must surface a safe error string")
+	assert.False(t, status.Live)
+}
+
 func TestStreamMonitorProviderErrorChannelNotFound(t *testing.T) {
 	public := &fakeStreamProvider{err: errors.New("channel not found: a")}
 	mon, _ := newFakeMonitor(public, nil)
