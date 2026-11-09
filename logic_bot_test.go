@@ -127,3 +127,21 @@ func TestStartBotLaunchesLoopAndStopsPromptly(t *testing.T) {
 	bm.mu.RUnlock()
 	assert.False(t, running, "bot should not be running after stopBot")
 }
+
+// TestStopBotDoesNotWaitForNeverStartedLoop verifies that stopping a bot whose
+// loop never ran returns immediately instead of waiting out the 10 second
+// graceful-shutdown timeout.
+func TestStopBotDoesNotWaitForNeverStartedLoop(t *testing.T) {
+	bm := newBotManager(nil, nil, nil, nil, context.Background(), "testchannel", 0, audio.Config{}, false, nil)
+
+	bm.mu.Lock()
+	bm.bots["bot-1"] = &botRuntime{
+		cfg:    storage.BotConfig{ID: "bot-1"},
+		client: newFakeTwitchClient(),
+	}
+	bm.mu.Unlock()
+
+	start := time.Now()
+	require.NoError(t, bm.stopBot("bot-1", false))
+	require.Less(t, time.Since(start), 500*time.Millisecond, "stopBot waited for a loop that never started")
+}

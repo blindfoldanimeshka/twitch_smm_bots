@@ -1037,6 +1037,9 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 	// P0-1: Graceful shutdown - set stopping flag and wait for loop to finish
 	br.stopping = true
 
+	// Whether the loop was actually running: only then can it signal br.stopped.
+	wasRunning := br.running
+
 	// Create channel if not exists (for first stop)
 	if br.stopped == nil {
 		br.stopped = make(chan struct{}, 1)
@@ -1054,13 +1057,17 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 
 	bm.broadcastPresence(br)
 
-	// P0-1: Wait for graceful shutdown with timeout
-	gracefulTimeout := 10 * time.Second
-	select {
-	case <-br.stopped:
-		slog.Info("graceful shutdown completed", "bot_id", botID)
-	case <-time.After(gracefulTimeout):
-		slog.Warn("graceful shutdown timeout, forcing stop", "bot_id", botID)
+	// P0-1: Wait for graceful shutdown with timeout. Only when the loop was
+	// actually running: a bot whose loop never started cannot signal br.stopped,
+	// so waiting here would always block for the full timeout.
+	if wasRunning && br.stopped != nil {
+		gracefulTimeout := 10 * time.Second
+		select {
+		case <-br.stopped:
+			slog.Info("graceful shutdown completed", "bot_id", botID)
+		case <-time.After(gracefulTimeout):
+			slog.Warn("graceful shutdown timeout, forcing stop", "bot_id", botID)
+		}
 	}
 
 	if persist {
