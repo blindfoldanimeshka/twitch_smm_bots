@@ -39,3 +39,30 @@ func TestEnsureSettingsTableMigratesLMStudioSettings(t *testing.T) {
 	assert.True(t, got.LLMPaidEnabled)
 	assert.Equal(t, 1.0, got.LLMPaidDailyCapUSD)
 }
+
+func TestEnsureSettingsTableAddsPresenceDefaults(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, "postgres://botfarm:botfarm@localhost:5432/botfarm?sslmode=disable")
+	if err != nil {
+		t.Skipf("postgres not available: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		t.Skipf("postgres not available: %v", err)
+	}
+	store := &Store{pool: pool}
+	require.NoError(t, store.EnsureSettingsTable(ctx))
+
+	got, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+	assert.True(t, got.PresenceEnabled)
+	assert.Equal(t, 20, got.PresenceSessionMinMinutes)
+	assert.Equal(t, 40, got.PresenceSessionMaxMinutes)
+	assert.Equal(t, 10, got.PresenceCooldownMinMinutes)
+	assert.Equal(t, 20, got.PresenceCooldownMaxMinutes)
+	assert.True(t, got.PresenceGreetingEnabled)
+	assert.True(t, got.PresenceFarewellEnabled)
+}

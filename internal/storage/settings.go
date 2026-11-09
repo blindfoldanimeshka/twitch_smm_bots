@@ -19,6 +19,13 @@ type Settings struct {
 	AudioEnabled                bool      `json:"audio_enabled"`
 	RotationEnabled             bool      `json:"rotation_enabled"`
 	RotationInterval            int       `json:"rotation_interval"` // minutes
+	PresenceEnabled             bool      `json:"presence_enabled"`
+	PresenceSessionMinMinutes   int       `json:"presence_session_min_minutes"`
+	PresenceSessionMaxMinutes   int       `json:"presence_session_max_minutes"`
+	PresenceCooldownMinMinutes  int       `json:"presence_cooldown_min_minutes"`
+	PresenceCooldownMaxMinutes  int       `json:"presence_cooldown_max_minutes"`
+	PresenceGreetingEnabled     bool      `json:"presence_greeting_enabled"`
+	PresenceFarewellEnabled     bool      `json:"presence_farewell_enabled"`
 	LLMProvider                 string    `json:"llm_provider"`
 	LLMApiURL                   string    `json:"llm_api_url"`
 	LLMModel                    string    `json:"llm_model"`
@@ -47,6 +54,13 @@ CREATE TABLE IF NOT EXISTS settings (
     audio_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rotation_interval INT NOT NULL DEFAULT 60,
+    presence_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    presence_session_min_minutes INT NOT NULL DEFAULT 20,
+    presence_session_max_minutes INT NOT NULL DEFAULT 40,
+    presence_cooldown_min_minutes INT NOT NULL DEFAULT 10,
+    presence_cooldown_max_minutes INT NOT NULL DEFAULT 20,
+    presence_greeting_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    presence_farewell_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     llm_provider TEXT NOT NULL DEFAULT 'openrouter',
     llm_api_url TEXT NOT NULL DEFAULT 'https://openrouter.ai/api/v1',
     llm_model TEXT NOT NULL DEFAULT 'openrouter/free',
@@ -64,6 +78,13 @@ INSERT INTO settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_model TEXT NOT NULL DEFAULT 'z-ai/glm-5.3-flash';
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS llm_paid_daily_cap_usd DOUBLE PRECISION NOT NULL DEFAULT 1.0;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_session_min_minutes INT NOT NULL DEFAULT 20;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_session_max_minutes INT NOT NULL DEFAULT 40;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_cooldown_min_minutes INT NOT NULL DEFAULT 10;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_cooldown_max_minutes INT NOT NULL DEFAULT 20;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_greeting_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS presence_farewell_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 UPDATE settings
 SET llm_provider = 'openrouter',
@@ -93,6 +114,9 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, channels, debug_mode, debug_channel, positive_prompt, negative_prompt,
 		       max_tokens, audio_enabled, rotation_enabled, rotation_interval,
+		       presence_enabled, presence_session_min_minutes, presence_session_max_minutes,
+		       presence_cooldown_min_minutes, presence_cooldown_max_minutes,
+		       presence_greeting_enabled, presence_farewell_enabled,
 		       llm_provider, llm_api_url, llm_model, llm_api_key,
 		       llm_paid_model, llm_paid_enabled, llm_paid_daily_cap_usd,
 		       twitch_client_id, twitch_client_secret, updated_at
@@ -108,6 +132,13 @@ func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {
 		&settings.AudioEnabled,
 		&settings.RotationEnabled,
 		&settings.RotationInterval,
+		&settings.PresenceEnabled,
+		&settings.PresenceSessionMinMinutes,
+		&settings.PresenceSessionMaxMinutes,
+		&settings.PresenceCooldownMinMinutes,
+		&settings.PresenceCooldownMaxMinutes,
+		&settings.PresenceGreetingEnabled,
+		&settings.PresenceFarewellEnabled,
 		&settings.LLMProvider,
 		&settings.LLMApiURL,
 		&settings.LLMModel,
@@ -150,15 +181,22 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 			audio_enabled = $7,
 			rotation_enabled = $8,
 			rotation_interval = $9,
-			llm_provider = $10,
-			llm_api_url = $11,
-			llm_model = $12,
-			llm_api_key = $13,
-			llm_paid_model = $14,
-			llm_paid_enabled = $15,
-			llm_paid_daily_cap_usd = $16,
-			twitch_client_id = $17,
-			twitch_client_secret = $18,
+			presence_enabled = $10,
+			presence_session_min_minutes = $11,
+			presence_session_max_minutes = $12,
+			presence_cooldown_min_minutes = $13,
+			presence_cooldown_max_minutes = $14,
+			presence_greeting_enabled = $15,
+			presence_farewell_enabled = $16,
+			llm_provider = $17,
+			llm_api_url = $18,
+			llm_model = $19,
+			llm_api_key = $20,
+			llm_paid_model = $21,
+			llm_paid_enabled = $22,
+			llm_paid_daily_cap_usd = $23,
+			twitch_client_id = $24,
+			twitch_client_secret = $25,
 			updated_at = NOW()
 		WHERE id = 'default'
 	`,
@@ -171,6 +209,13 @@ func (s *Store) UpdateSettings(ctx context.Context, settings *Settings) error {
 		settings.AudioEnabled,
 		settings.RotationEnabled,
 		settings.RotationInterval,
+		settings.PresenceEnabled,
+		settings.PresenceSessionMinMinutes,
+		settings.PresenceSessionMaxMinutes,
+		settings.PresenceCooldownMinMinutes,
+		settings.PresenceCooldownMaxMinutes,
+		settings.PresenceGreetingEnabled,
+		settings.PresenceFarewellEnabled,
 		settings.LLMProvider,
 		settings.LLMApiURL,
 		settings.LLMModel,
