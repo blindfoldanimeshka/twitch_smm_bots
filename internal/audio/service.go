@@ -297,6 +297,7 @@ func (s *Service) transcribe(ctx context.Context, audioData []byte) (string, err
 	if strings.TrimSpace(s.cfg.STTLanguage) != "" {
 		_ = writer.WriteField("language", s.cfg.STTLanguage)
 	}
+	_ = writer.WriteField("response_format", "json")
 
 	part, err := writer.CreateFormFile("file", "chunk.wav")
 	if err != nil {

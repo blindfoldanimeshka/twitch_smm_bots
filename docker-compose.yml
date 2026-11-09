@@ -108,31 +108,38 @@ services:
       timeout: 5s
       retries: 5
 
-  # Optional: local stream audio transcription. Start with:
-  #   docker compose --profile audio up -d --build
+  # Optional: local stream audio transcription with whisper.cpp. Start with:
+  #   docker compose --profile audio up -d
+  # Requires models/ggml-small-q5_1.bin on the host.
   stt:
     profiles: ["audio"]
-    build:
-      context: ./stt_server
-      dockerfile: Dockerfile
-      args:
-        - BASE_IMAGE_PREFIX=${BASE_IMAGE_PREFIX:-}
+    image: ghcr.io/ggml-org/whisper.cpp:main
     container_name: twitch-smm-stt
     restart: unless-stopped
+    entrypoint: ["whisper-server"]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9000"
+      - -m
+      - /models/${STT_MODEL_FILE:-ggml-small-q5_1.bin}
+      - -t
+      - ${STT_THREADS:-4}
+      - -l
+      - ${STT_LANGUAGE:-ru}
+      - --inference-path
+      - /v1/audio/transcriptions
     ports:
       - "127.0.0.1:9000:9000"
-    environment:
-      - STT_MODEL_NAME=${STT_MODEL_NAME:-small}
-      - STT_DEVICE=${STT_DEVICE:-cpu}
-      - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-int8}
     volumes:
-      - whisper_cache:/root/.cache/huggingface
+      - ./models:/models:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 120s
+      start_period: 60s
 
   # Optional: database UI. Start with:
   #   docker compose --profile tools up -d
@@ -155,4 +162,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  whisper_cache:
