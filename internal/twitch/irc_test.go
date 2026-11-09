@@ -166,6 +166,12 @@ func TestConcurrentRateLimit(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			client.HandleRateLimit()
+			// Bound the wait to a few milliseconds: the test verifies the
+			// concurrent locking behaviour, not that we actually sleep out
+			// the capped 5-minute backoff HandleRateLimit schedules.
+			client.mu.Lock()
+			client.rateLimitUntil = time.Now().Add(10 * time.Millisecond)
+			client.mu.Unlock()
 			_ = client.IsRateLimited()
 			client.WaitForRateLimit()
 			client.ResetRateLimit()
