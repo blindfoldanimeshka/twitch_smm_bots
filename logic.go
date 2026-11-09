@@ -37,6 +37,30 @@ const (
 
 	// Stats
 	maxMessageTimes = 512 // cap for botManager.messageTimes
+
+	// Presence simulation defaults
+	defaultPresenceSessionMin  = 20 * time.Minute
+	defaultPresenceSessionMax  = 40 * time.Minute
+	defaultPresenceCooldownMin = 10 * time.Minute
+	defaultPresenceCooldownMax = 20 * time.Minute
+
+	// presenceStopWait bounds how long pauseBot waits for the old loop to
+	// exit before giving up on scheduling the cooldown return.
+	presenceStopWait = 5 * time.Second
+)
+
+// Presence session states for botRuntime.presenceState.
+const (
+	presenceStateOnline   = "online"
+	presenceStateCooldown = "cooldown"
+	presenceStateStopped  = "stopped"
+	presenceStateError    = "error"
+)
+
+// Presence phrase kinds.
+const (
+	presenceGreeting = "greeting"
+	presenceFarewell = "farewell"
 )
 
 type promptPair struct {
@@ -142,6 +166,155 @@ func (l *globalLimiter) allow(now time.Time) bool {
 	return true
 }
 
+// presenceConfig holds the presence simulation settings. Presence makes bots
+// behave like humans: they chat in sessions, then take a cooldown break and
+// return afterwards. It only ever uses IRC SendMessage — it never touches
+// viewer counts or anything else.
+type presenceConfig struct {
+	enabled     bool
+	sessionMin  time.Duration
+	sessionMax  time.Duration
+	cooldownMin time.Duration
+	cooldownMax time.Duration
+	greeting    bool
+	farewell    bool
+}
+
+// presenceTimer cancels a scheduled presence callback. *time.Timer satisfies
+// it; tests replace it with a fake.
+type presenceTimer interface{ Stop() bool }
+
+// Fixed Russian presence phrases per personality (no LLM involved).
+var presenceGreetings = map[string][]string{
+	PersonalityCheerful: {
+		"Всем привет! Отличный день для стрима!",
+		"Привет, чат! Рад всех видеть!",
+		"Здарова, банда! Как настроение?",
+		"Ну что, погнали смотреть стрим?",
+	},
+	PersonalityToxic: {
+		"Ну и что тут происходит? Посмотрим.",
+		"Опять стрим. Ладно, я тут.",
+		"Приветик. Постараюсь не уснуть.",
+		"С чего начнем? С разочарования?",
+	},
+	PersonalityNeutral: {
+		"Всем привет.",
+		"Здарова, чат.",
+		"Привет, что тут у нас?",
+		"Вечер в хату.",
+	},
+	PersonalityHyper: {
+		"ВВСЕМ ПРИВЕЕЕТ! ПОГНАЛИ!",
+		"Я ТУТ! ЭТО БУДЕТ ЛУЧШИЙ СТРИМ!",
+		"АААА, ПРИВЕТ ЧАТ! Я ЖДАЛ!",
+		"НАКОНЕЦ-ТО! ВСЕМ ПРИВЕТ!",
+	},
+}
+
+var presenceFarewells = map[string][]string{
+	PersonalityCheerful: {
+		"Мне пора, всем пока! До встречи!",
+		"Побежал, хорошего стрима всем!",
+		"Пока-пока! Возвращусь позже.",
+		"Всем удачи, до скорого!",
+	},
+	PersonalityToxic: {
+		"Скукота тут. Ухожу.",
+		"Ладно, с меня хватит. Пока.",
+		"Дальше смотреть нечего. Пока.",
+		"Я такое не смотрю. Пока.",
+	},
+	PersonalityNeutral: {
+		"Мне нужно отойти, пока.",
+		"Ухожу, до встречи.",
+		"Пока, всем хорошего дня.",
+		"Отойду на время, вернусь позже.",
+	},
+	PersonalityHyper: {
+		"ПОБЕЖАЛ! СКОРО ВЕРНУСЬ!",
+		"ПОКА-ПОКА! ЕЩЕ ВЕРНУСЬ!",
+		"МЕНЯ НЕДОЛГО НЕ БУДЕТ! ЖДИТЕ!",
+		"ЭТО БЫЛО КРУТО! ПОКА!",
+	},
+}
+
+// randomPresencePhrase picks a fixed phrase of the given kind ("greeting" or
+// "farewell") for the personality, falling back to the neutral pool.
+func randomPresencePhrase(personality, kind string) string {
+	pool := presenceGreetings
+	if kind == presenceFarewell {
+		pool = presenceFarewells
+	}
+	phrases, ok := pool[personality]
+	if !ok || len(phrases) == 0 {
+		phrases = pool[PersonalityNeutral]
+	}
+	return phrases[rand.Intn(len(phrases))]
+}
+
+// pickPresenceDuration returns a random duration in [min, max] (minute
+// granularity), clamping max to min and falling back to the default session
+// length when min is not positive.
+func pickPresenceDuration(minD, maxD time.Duration) time.Duration {
+	if minD <= 0 {
+		minD = defaultPresenceSessionMin
+	}
+	if maxD < minD {
+		maxD = minD
+	}
+	if maxD == minD {
+		return minD
+	}
+	return minD + time.Duration(rand.Intn(int((maxD-minD)/time.Minute)+1))*time.Minute
+}
+
+// presenceConfigFromSettings maps storage settings to presenceConfig using
+// the built-in defaults for nil or zero values.
+func presenceConfigFromSettings(settings *storage.Settings) presenceConfig {
+	cfg := presenceConfig{
+		enabled:     true,
+		sessionMin:  defaultPresenceSessionMin,
+		sessionMax:  defaultPresenceSessionMax,
+		cooldownMin: defaultPresenceCooldownMin,
+		cooldownMax: defaultPresenceCooldownMax,
+		greeting:    true,
+		farewell:    true,
+	}
+	if settings == nil {
+		return cfg
+	}
+
+	cfg.enabled = settings.PresenceEnabled
+	cfg.greeting = settings.PresenceGreetingEnabled
+	cfg.farewell = settings.PresenceFarewellEnabled
+
+	if minutes := settings.PresenceSessionMinMinutes; minutes > 0 {
+		cfg.sessionMin = time.Duration(minutes) * time.Minute
+	}
+	if minutes := settings.PresenceSessionMaxMinutes; minutes > 0 {
+		cfg.sessionMax = time.Duration(minutes) * time.Minute
+	}
+	if minutes := settings.PresenceCooldownMinMinutes; minutes > 0 {
+		cfg.cooldownMin = time.Duration(minutes) * time.Minute
+	}
+	if minutes := settings.PresenceCooldownMaxMinutes; minutes > 0 {
+		cfg.cooldownMax = time.Duration(minutes) * time.Minute
+	}
+	if cfg.sessionMax < cfg.sessionMin {
+		cfg.sessionMax = cfg.sessionMin
+	}
+	if cfg.cooldownMax < cfg.cooldownMin {
+		cfg.cooldownMax = cfg.cooldownMin
+	}
+	return cfg
+}
+
+// defaultPresenceAfter adapts time.AfterFunc to the presenceTimer interface.
+func defaultPresenceAfter(d time.Duration, fn func()) presenceTimer {
+	return time.AfterFunc(d, fn)
+}
+
 type TwitchClient interface {
 	Connect() error
 	IsConnected() bool
@@ -161,31 +334,41 @@ type botRuntime struct {
 	lastSent   time.Time
 	disableLLM bool          // if true, skip LLM/STT generation
 	stopped    chan struct{} // P0-1: Channel to signal when bot fully stopped
+
+	// Presence simulation state.
+	presenceState  string        // online | cooldown | stopped | error
+	sessionEndsAt  time.Time     // end of the current presence session
+	cooldownUntil  time.Time     // when a paused bot returns
+	presenceTimer  presenceTimer // cancels the pending session end or return
+	autoPaused     bool          // paused by the presence session end
+	stoppedByError bool          // stopped by consecutive errors
 }
 
 type botManager struct {
-	mu              sync.RWMutex // P0-5: RWMutex for read-heavy operations
-	runtimeCtx      context.Context
-	store           *storage.Store
-	llmClient       *llm.Client
-	cacheClient     *cache.Client
-	helixClient     *twitch.HelixClient
-	streamMonitor   *twitch.StreamMonitor
-	channel         string
-	audioConfig     audio.Config
-	audioService    *audio.Service
-	audioCancel     context.CancelFunc
-	globalLimiter   *globalLimiter
-	bots            map[string]*botRuntime
-	apiHub          *api.Hub
-	rotationEnabled bool
-	rotationCancel  context.CancelFunc
-	debugMode       bool
-	positivePrompt  string
-	negativePrompt  string
-	maxTokens       int
-	messageTimes    []time.Time // successful Twitch sends, for MessagesPerMin
-	newIRCClient    func(login, password, channel string) TwitchClient
+	mu             sync.RWMutex // P0-5: RWMutex for read-heavy operations
+	runtimeCtx     context.Context
+	store          *storage.Store
+	llmClient      *llm.Client
+	cacheClient    *cache.Client
+	helixClient    *twitch.HelixClient
+	streamMonitor  *twitch.StreamMonitor
+	channel        string
+	audioConfig    audio.Config
+	audioService   *audio.Service
+	audioCancel    context.CancelFunc
+	globalLimiter  *globalLimiter
+	bots           map[string]*botRuntime
+	apiHub         *api.Hub
+	debugMode      bool
+	positivePrompt string
+	negativePrompt string
+	maxTokens      int
+	messageTimes   []time.Time // successful Twitch sends, for MessagesPerMin
+	newIRCClient   func(login, password, channel string) TwitchClient
+
+	// Presence simulation.
+	presence      presenceConfig
+	presenceAfter func(time.Duration, func()) presenceTimer // default: defaultPresenceAfter
 }
 
 func normalizeChannelName(raw string) string {
@@ -259,6 +442,16 @@ func newBotManager(
 		newIRCClient: func(login, password, channel string) TwitchClient {
 			return twitch.NewIRCClient(login, password, channel)
 		},
+		presence: presenceConfig{
+			enabled:     true,
+			sessionMin:  defaultPresenceSessionMin,
+			sessionMax:  defaultPresenceSessionMax,
+			cooldownMin: defaultPresenceCooldownMin,
+			cooldownMax: defaultPresenceCooldownMax,
+			greeting:    true,
+			farewell:    true,
+		},
+		presenceAfter: defaultPresenceAfter,
 	}
 }
 
@@ -491,6 +684,11 @@ func (bm *botManager) UpdateBot(ctx context.Context, botID string, updates map[s
 func (bm *botManager) DeleteBot(ctx context.Context, botID string) error {
 	bm.mu.Lock()
 	br, ok := bm.bots[botID]
+	if ok && br.presenceTimer != nil {
+		// Deleting cancels any pending presence session or cooldown return.
+		br.presenceTimer.Stop()
+		br.presenceTimer = nil
+	}
 	bm.mu.Unlock()
 	if ok && br.running {
 		if err := bm.stopBot(botID, false); err != nil {
@@ -570,6 +768,8 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 
 	go bm.runBotLoop(ctx, br)
 
+	bm.beginPresenceSession(botID, disableLLM)
+
 	if persist {
 		if err := bm.store.SetBotEnabled(context.Background(), botID, true); err != nil {
 			bm.stopBot(botID, false)
@@ -578,6 +778,168 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	}
 
 	return nil
+}
+
+// beginPresenceSession marks a freshly started bot as online and schedules
+// the end of its presence session. When presence is disabled the bot simply
+// stays online with no timer. The greeting is sent outside the manager lock.
+func (bm *botManager) beginPresenceSession(botID string, disableLLM bool) {
+	bm.mu.Lock()
+	br, ok := bm.bots[botID]
+	if !ok {
+		bm.mu.Unlock()
+		return
+	}
+
+	br.presenceState = presenceStateOnline
+	br.autoPaused = false
+	br.stoppedByError = false
+	br.cooldownUntil = time.Time{}
+
+	client := br.client
+	personality := br.cfg.Personality
+	sessionEnabled := bm.presence.enabled
+	greetingEnabled := sessionEnabled && bm.presence.greeting && !bm.debugMode && !disableLLM
+	debugMode := bm.debugMode
+	var session time.Duration
+	if sessionEnabled {
+		session = pickPresenceDuration(bm.presence.sessionMin, bm.presence.sessionMax)
+		br.sessionEndsAt = time.Now().Add(session)
+	} else {
+		br.sessionEndsAt = time.Time{}
+	}
+
+	// Register the session timer while holding the lock so a concurrent stop
+	// can always observe (and cancel) it. The real adapter never runs the
+	// callback synchronously, so this cannot deadlock.
+	var timer presenceTimer
+	if sessionEnabled && bm.presenceAfter != nil {
+		timer = bm.presenceAfter(session, func() { bm.pauseBot(botID) })
+		if br.presenceTimer != nil {
+			br.presenceTimer.Stop()
+		}
+		br.presenceTimer = timer
+	}
+	bm.mu.Unlock()
+
+	// Greeting message: presence only ever sends via IRC and never touches
+	// viewer counts.
+	if greetingEnabled {
+		msg := randomPresencePhrase(personality, presenceGreeting)
+		if err := client.SendMessage(msg); err != nil {
+			slog.Warn("presence greeting send failed", "bot_id", botID, "debug_mode", debugMode, "error", err)
+		} else {
+			bm.recordMessageSent()
+		}
+	}
+}
+
+// pauseBot ends the current presence session: it sends the farewell, closes
+// the client and schedules the bot's return after a cooldown. It is a no-op
+// unless the bot is running inside an active (online) session. Only this
+// completed-session path schedules a return; manual stops, error stops and
+// StopAll cancel it instead.
+func (bm *botManager) pauseBot(botID string) {
+	bm.mu.Lock()
+	br, ok := bm.bots[botID]
+	if !ok || !br.running || br.presenceState != presenceStateOnline {
+		bm.mu.Unlock()
+		return
+	}
+
+	client := br.client
+	personality := br.cfg.Personality
+	stopped := br.stopped
+	disableLLM := br.disableLLM
+	farewellEnabled := bm.presence.farewell && !bm.debugMode && !disableLLM
+	after := bm.presenceAfter
+	cooldown := pickPresenceDuration(bm.presence.cooldownMin, bm.presence.cooldownMax)
+
+	br.autoPaused = true
+	br.running = false
+	br.presenceState = presenceStateCooldown
+	br.sessionEndsAt = time.Time{}
+	br.cooldownUntil = time.Now().Add(cooldown)
+	if br.presenceTimer != nil {
+		br.presenceTimer.Stop()
+		br.presenceTimer = nil
+	}
+	if br.cancel != nil {
+		br.cancel()
+	}
+	bm.mu.Unlock()
+
+	// Farewell before the client is closed; network I/O must not happen
+	// while bm.mu is held.
+	if farewellEnabled {
+		msg := randomPresencePhrase(personality, presenceFarewell)
+		if err := client.SendMessage(msg); err != nil {
+			slog.Warn("presence farewell send failed", "bot_id", botID, "error", err)
+		} else {
+			bm.recordMessageSent()
+		}
+	}
+	client.Close()
+
+	// Give the old loop time to fully exit so the return cannot produce a
+	// second concurrent runtime. If it is still alive after the timeout, skip
+	// the return entirely rather than risk a duplicate loop.
+	if stopped != nil {
+		select {
+		case <-stopped:
+		case <-time.After(presenceStopWait):
+			slog.Warn("presence: previous bot loop still running, skipping cooldown return", "bot_id", botID)
+			return
+		}
+	}
+
+	bm.mu.Lock()
+	ctx := bm.runtimeCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	returnEnabled := bm.presence.enabled
+	bm.mu.Unlock()
+
+	if after == nil || !returnEnabled {
+		return
+	}
+	wasDisableLLM := disableLLM
+	after(cooldown, func() { bm.resumeAfterCooldown(botID, wasDisableLLM) })
+}
+
+// resumeAfterCooldown returns a bot from its presence cooldown. Only a bot
+// that is still parked in cooldown (nobody stopped, errored or manually
+// restarted it in the meantime) comes back.
+func (bm *botManager) resumeAfterCooldown(botID string, wasDisableLLM bool) {
+	bm.mu.Lock()
+	br, ok := bm.bots[botID]
+	if !ok || br.presenceState != presenceStateCooldown || br.stoppedByError || !bm.presence.enabled || br.running {
+		bm.mu.Unlock()
+		return
+	}
+	ctx := bm.runtimeCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	bm.mu.Unlock()
+
+	if err := bm.startBot(ctx, botID, false, wasDisableLLM); err != nil {
+		slog.Error("presence: failed to resume bot after cooldown", "bot_id", botID, "error", err)
+	}
+}
+
+// markBotError flags a runtime that stopped because of too many consecutive
+// errors: no cooldown return may be scheduled afterwards.
+func (bm *botManager) markBotError(br *botRuntime) {
+	bm.mu.Lock()
+	br.presenceState = presenceStateError
+	br.stoppedByError = true
+	if br.presenceTimer != nil {
+		br.presenceTimer.Stop()
+		br.presenceTimer = nil
+	}
+	bm.mu.Unlock()
 }
 
 func (bm *botManager) stopAudio() {
@@ -602,6 +964,18 @@ func (bm *botManager) stopBot(botID string, persist bool) error {
 		bm.mu.Unlock()
 		return fmt.Errorf("bot not found: %s", botID)
 	}
+
+	// Any stop cancels a pending presence session or cooldown return: only a
+	// completed presence session may schedule a return.
+	if br.presenceTimer != nil {
+		br.presenceTimer.Stop()
+		br.presenceTimer = nil
+	}
+	br.presenceState = presenceStateStopped
+	br.sessionEndsAt = time.Time{}
+	br.cooldownUntil = time.Time{}
+	br.autoPaused = false
+	br.stoppedByError = false
 
 	// P0-1: Graceful shutdown - set stopping flag and wait for loop to finish
 	br.stopping = true
@@ -722,6 +1096,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					slog.Error("too many errors, stopping bot", "bot_id", br.cfg.ID)
+					bm.markBotError(br)
 					return
 				}
 				time.Sleep(errorRetryDelay)
@@ -784,6 +1159,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 			consecutiveErrors++
 			if consecutiveErrors >= maxConsecutiveErrors {
 				slog.Error("too many LLM errors, stopping bot", "bot_id", br.cfg.ID)
+				bm.markBotError(br)
 				return
 			}
 			continue
@@ -839,6 +1215,7 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				consecutiveErrors++
 				if consecutiveErrors >= maxConsecutiveErrors {
 					slog.Error("too many send errors, stopping bot", "bot_id", br.cfg.ID)
+					bm.markBotError(br)
 					return
 				}
 				continue
@@ -990,47 +1367,29 @@ func randomDelay(minSec, maxSec int) time.Duration {
 	return time.Duration(minSec+rand.Intn(span)) * time.Second
 }
 
-// startRotation запускает горутину для периодической ротации ботов между каналами
-func (bm *botManager) startRotation(ctx context.Context, channels []string, intervalMinutes int) {
-	if len(channels) < 2 || intervalMinutes <= 0 {
-		slog.Warn("Rotation disabled: need at least 2 channels and positive interval")
-		return
-	}
-
-	rotationCtx, cancel := context.WithCancel(ctx)
-	bm.mu.Lock()
-	bm.rotationEnabled = true
-	bm.rotationCancel = cancel
-	bm.mu.Unlock()
-
-	slog.Info("Starting bot rotation", "channels", len(channels), "interval_minutes", intervalMinutes)
-
-	go func() {
-		ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-rotationCtx.Done():
-				slog.Info("Bot rotation stopped")
-				return
-			case <-ticker.C:
-				bm.rotateBots(ctx, channels)
-			}
-		}
-	}()
-}
-
-// stopRotation останавливает ротацию ботов
-func (bm *botManager) stopRotation() {
+// cancelPresenceBots cancels pending presence timers for every bot: cooldown
+// bots are parked as stopped and running bots lose their session timer, so a
+// disabled presence can never pause a bot into a return that would never
+// happen.
+func (bm *botManager) cancelPresenceBots() {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	if bm.rotationCancel != nil {
-		bm.rotationCancel()
-		bm.rotationCancel = nil
+	for _, br := range bm.bots {
+		if br.presenceTimer != nil {
+			br.presenceTimer.Stop()
+			br.presenceTimer = nil
+		}
+		switch br.presenceState {
+		case presenceStateCooldown:
+			br.presenceState = presenceStateStopped
+			br.cooldownUntil = time.Time{}
+			br.autoPaused = false
+		case presenceStateOnline:
+			// The bot keeps chatting; no further session pause is scheduled.
+			br.sessionEndsAt = time.Time{}
+		}
 	}
-	bm.rotationEnabled = false
 }
 
 func (bm *botManager) startAudio(ctx context.Context) error {
@@ -1137,6 +1496,8 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	} else {
 		bm.maxTokens = llmMaxTokens
 	}
+	// Presence simulation configuration.
+	bm.presence = presenceConfigFromSettings(settings)
 	audioWasRunning := bm.audioService != nil
 	bm.mu.Unlock()
 
@@ -1150,11 +1511,10 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 		bm.streamMonitor.SetChannels(settings.Channels)
 	}
 
-	if settings.RotationEnabled && len(settings.Channels) > 1 {
-		bm.stopRotation()
-		bm.startRotation(baseCtx, settings.Channels, settings.RotationInterval)
-	} else {
-		bm.stopRotation()
+	// Presence disabled: cancel every pending presence session or cooldown
+	// return so no bot comes back on its own.
+	if !bm.presence.enabled {
+		bm.cancelPresenceBots()
 	}
 
 	if settings.AudioEnabled {
@@ -1169,59 +1529,6 @@ func (bm *botManager) ApplySettings(_ context.Context, settings *storage.Setting
 	}
 
 	return nil
-}
-
-// rotateBots переключает ботов на случайные каналы
-func (bm *botManager) rotateBots(ctx context.Context, channels []string) {
-	if len(channels) < 2 {
-		return
-	}
-
-	bm.mu.Lock()
-	runningBots := make([]*botRuntime, 0)
-	for _, br := range bm.bots {
-		if br.running {
-			runningBots = append(runningBots, br)
-		}
-	}
-	bm.mu.Unlock()
-
-	if len(runningBots) == 0 {
-		return
-	}
-
-	slog.Info("Rotating bots", "bots", len(runningBots), "channels", len(channels))
-
-	for _, br := range runningBots {
-		// Выбираем случайный канал
-		newChannel := channels[rand.Intn(len(channels))]
-
-		// Останавливаем бота
-		if err := bm.stopBot(br.cfg.ID, false); err != nil {
-			slog.Error("Failed to stop bot for rotation", "bot_id", br.cfg.ID, "error", err)
-			continue
-		}
-
-		// Обновляем канал в БД
-		if err := bm.store.UpdateBotChannel(ctx, br.cfg.ID, newChannel); err != nil {
-			slog.Error("Failed to update channel", "bot_id", br.cfg.ID, "error", err)
-			continue
-		}
-
-		// Обновляем конфигурацию и создаем новый IRC клиент
-		bm.mu.Lock()
-		br.cfg.CurrentChannel = newChannel
-		br.client = twitch.NewIRCClient(br.cfg.TwitchLogin, br.cfg.Password, newChannel)
-		bm.mu.Unlock()
-
-		// Запускаем бота на новом канале
-		if err := bm.startBot(ctx, br.cfg.ID, false, false); err != nil {
-			slog.Error("Failed to restart bot on channel", "bot_id", br.cfg.ID, "channel", newChannel, "error", err)
-			continue
-		}
-
-		slog.Info("Bot rotated to channel", "bot_id", br.cfg.ID, "channel", newChannel)
-	}
 }
 
 func runLogCleanupJob(ctx context.Context, store *storage.Store) {
@@ -1475,7 +1782,7 @@ func main() {
 		}
 	}()
 
-	// Загружаем настройки и применяем runtime-флаги (ротация, аудио-контекст)
+	// Загружаем настройки и применяем runtime-флаги (presence, аудио-контекст)
 	if err := manager.ApplySettings(ctx, settings); err != nil {
 		slog.Error("Failed to apply settings", "error", err)
 	}
@@ -1488,7 +1795,6 @@ func main() {
 		<-ctx.Done()
 	}
 
-	manager.stopRotation()
 	manager.stopAudio()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
