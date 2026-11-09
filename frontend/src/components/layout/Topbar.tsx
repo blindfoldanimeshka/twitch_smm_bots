@@ -27,7 +27,7 @@ function formatRefreshTime(dataUpdatedAt: number | undefined): string {
 }
 
 export function Topbar({ title, onNavigate }: TopbarProps) {
-  const { connected } = useWebSocketStatus()
+  const { connected, error } = useWebSocketStatus()
 
   const { data: settings, dataUpdatedAt } = useQuery({
     queryKey: ['settings'],
@@ -78,9 +78,13 @@ export function Topbar({ title, onNavigate }: TopbarProps) {
       : { tone: 'neutral', label: 'STT: выкл' }
     : { tone: 'neutral', label: 'STT: …' }
 
-  const ws: ChipState = connected
-    ? { tone: 'success', label: 'WS: онлайн' }
-    : { tone: 'neutral', label: 'WS: офлайн' }
+  // A socket error outranks plain offline: the backoff is running, but the
+  // user must see that something failed, not that we are merely not up yet.
+  const ws: ChipState = error
+    ? { tone: 'error', label: 'WebSocket: ошибка' }
+    : connected
+      ? { tone: 'success', label: 'WS: онлайн' }
+      : { tone: 'neutral', label: 'WS: офлайн' }
 
   return (
     <header className="topbar">

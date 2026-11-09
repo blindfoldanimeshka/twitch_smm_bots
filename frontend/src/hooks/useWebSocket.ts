@@ -1,13 +1,75 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { config } from '../config';
+import type { Stats } from '../api/client';
 
-export interface WSMessage {
-  type: string;
-  payload: any;
+// ---------------------------------------------------------------------------
+// Typed events
+//
+// Mirrors the backend DTOs in internal/api/dto.go (WSMessage + payload types)
+// and the seven types emitted by internal/api/websocket.go. Timestamps arrive
+// as Go time.Time, marshalled to RFC3339 strings.
+// ---------------------------------------------------------------------------
+
+export interface BotStatusPayload {
+  bot_id: string;
+  status: string;
+}
+
+export interface BotPresencePayload {
+  bot_id: string;
+  login: string;
+  state: string;
+  at: string;
+}
+
+export interface BotMessagePayload {
+  bot_id: string;
+  message: string;
+  personality: string;
+  channel?: string;
+  timestamp: string;
+}
+
+export interface BotLogPayload {
+  bot_id: string;
+  log_type: string;
+  level: string;
+  message: string;
+  context?: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface SettingsLogPayload {
+  level: string;
+  message: string;
+  changes?: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface AudioContextPayload {
+  context: string;
+}
+
+export interface WSPayloads {
+  bot_status_changed: BotStatusPayload;
+  bot_presence_changed: BotPresencePayload;
+  bot_message_sent: BotMessagePayload;
+  stats_updated: Stats;
+  bot_log: BotLogPayload;
+  settings_log: SettingsLogPayload;
+  audio_context: AudioContextPayload;
+}
+
+/** Discriminated union: narrowing on `type` also types `payload`. */
+export type WSMessage = { [K in keyof WSPayloads]: { type: K; payload: WSPayloads[K] } }[keyof WSPayloads];
+
+export interface WebSocketStatus {
+  connected: boolean;
+  error: boolean;
 }
 
 type MessageHandler = (msg: WSMessage) => void;
-type StatusListener = (connected: boolean) => void;
+type StatusListener = (connected: boolean, error: boolean) => void;
 
 // ---------------------------------------------------------------------------
 // Shared singleton connection
@@ -25,13 +87,23 @@ const statusListeners = new Set<StatusListener>();
 
 let socket: WebSocket | null = null;
 let connected = false;
+let socketError = false;
 let started = false;
 let reconnectAttempts = 0;
 let reconnectTimer: number | undefined;
 
+function notifyStatus(): void {
+  statusListeners.forEach((listener) => listener(connected, socketError));
+}
+
 function setConnected(next: boolean): void {
   connected = next;
-  statusListeners.forEach((listener) => listener(next));
+  notifyStatus();
+}
+
+function setSocketError(next: boolean): void {
+  socketError = next;
+  notifyStatus();
 }
 
 function connect(): void {
@@ -53,6 +125,7 @@ function connect(): void {
 
   ws.onopen = () => {
     reconnectAttempts = 0; // reset backoff after a successful open
+    setSocketError(false);
     setConnected(true);
   };
 
@@ -67,7 +140,11 @@ function connect(): void {
   };
 
   // Deliberately silent: payload and error logging may leak sensitive data.
-  ws.onerror = () => {};
+  // Only the flag matters to the UI: "connecting" must not linger forever
+  // when the socket clearly failed.
+  ws.onerror = () => {
+    setSocketError(true);
+  };
 
   ws.onclose = () => {
     if (socket === ws) {
@@ -117,8 +194,8 @@ export function onWebSocketStatus(listener: StatusListener): () => void {
   };
 }
 
-export function getWebSocketConnected(): boolean {
-  return connected;
+export function getWebSocketStatus(): WebSocketStatus {
+  return { connected, error: socketError };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,34 +204,39 @@ export function getWebSocketConnected(): boolean {
 
 interface WebSocketContextValue {
   connected: boolean;
+  error: boolean;
 }
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 
 export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
-  const [connected, setConnected] = useState(getWebSocketConnected);
+  const [status, setStatus] = useState<WebSocketStatus>(getWebSocketStatus);
 
   useEffect(() => {
     startWebSocket();
-    return onWebSocketStatus(setConnected);
+    return onWebSocketStatus((nextConnected, nextError) =>
+      setStatus({ connected: nextConnected, error: nextError })
+    );
   }, []);
 
-  return createElement(WebSocketContext.Provider, { value: { connected } }, children);
+  return createElement(WebSocketContext.Provider, { value: status }, children);
 };
 
 /** Connection state of the shared socket. Works inside and without a provider. */
-export const useWebSocketStatus = (): { connected: boolean } => {
+export const useWebSocketStatus = (): WebSocketStatus => {
   const context = useContext(WebSocketContext);
-  const [connected, setConnected] = useState(getWebSocketConnected);
+  const [status, setStatus] = useState<WebSocketStatus>(getWebSocketStatus);
 
   useEffect(() => {
     if (context) {
       return; // the provider owns the status
     }
-    return onWebSocketStatus(setConnected);
+    return onWebSocketStatus((nextConnected, nextError) =>
+      setStatus({ connected: nextConnected, error: nextError })
+    );
   }, [context]);
 
-  return { connected: context ? context.connected : connected };
+  return context ?? status;
 };
 
 /** Subscribes a handler to the shared socket without opening a new one. */

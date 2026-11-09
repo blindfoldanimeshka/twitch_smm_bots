@@ -55,14 +55,16 @@ export default function Stream() {
       if (msg.type !== 'bot_presence_changed') {
         return
       }
-      const payload = (msg.payload ?? {}) as { login?: unknown; state?: unknown; at?: unknown }
-      if (typeof payload.login !== 'string' || payload.login === '') {
+      const { login, state, at } = msg.payload
+      if (!login) {
         return
       }
+      // Only `state` keeps a runtime guard: the backend treats it as a free
+      // string and any unexpected value must read as "left", not crash.
       const event: ChatPresenceEvent = {
-        login: payload.login,
-        state: typeof payload.state === 'string' ? payload.state : '',
-        at: typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
+        login,
+        state: typeof state === 'string' ? state : '',
+        at: at || new Date().toISOString(),
       }
       setPresenceEvents((prev) => {
         const next = [...prev, event]

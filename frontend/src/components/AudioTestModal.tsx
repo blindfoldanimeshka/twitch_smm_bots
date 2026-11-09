@@ -21,7 +21,7 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
   const [transcription, setTranscription] = useState<string[]>([])
   const [testingLLM, setTestingLLM] = useState(false)
   const [llmResult, setLlmResult] = useState('')
-  const { connected } = useWebSocketStatus()
+  const { connected, error } = useWebSocketStatus()
 
   // Close clears the feed: the next open must show a fresh session, not the
   // stale transcript of the previous one.
@@ -33,8 +33,9 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
 
   useWebSocketSubscription((msg) => {
     if (!isOpen) return
-    if (msg.type !== 'audio_context' || !msg.payload?.context) return
-    const text = String(msg.payload.context)
+    if (msg.type !== 'audio_context') return
+    const text = msg.payload.context
+    if (!text) return
     setTranscription((prev) => {
       const next = [...prev, text]
       return next.length > TRANSCRIPT_CAP ? next.slice(next.length - TRANSCRIPT_CAP) : next
@@ -66,7 +67,9 @@ export function AudioTestModal({ isOpen, onClose, channel }: AudioTestModalProps
           {' · '}
           Статус: {connected
             ? <span style={{ color: 'var(--success)' }}>подключено</span>
-            : <span style={{ color: 'var(--warning)' }}>подключение…</span>}
+            : error
+              ? <span style={{ color: 'var(--error)' }}>ошибка соединения</span>
+              : <span style={{ color: 'var(--warning)' }}>подключение…</span>}
         </p>
 
         <div
