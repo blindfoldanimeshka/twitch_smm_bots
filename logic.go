@@ -34,6 +34,9 @@ const (
 	// LLM settings
 	llmTimeout   = 20 * time.Second
 	llmMaxTokens = 60
+
+	// Stats
+	maxMessageTimes = 512 // cap for botManager.messageTimes
 )
 
 type promptPair struct {
@@ -181,6 +184,8 @@ type botManager struct {
 	positivePrompt  string
 	negativePrompt  string
 	maxTokens       int
+	messageTimes    []time.Time // successful Twitch sends, for MessagesPerMin
+	newIRCClient    func(login, password, channel string) TwitchClient
 }
 
 func normalizeChannelName(raw string) string {
@@ -251,6 +256,9 @@ func newBotManager(
 		bots:          make(map[string]*botRuntime),
 		debugMode:     debugMode,
 		maxTokens:     llmMaxTokens,
+		newIRCClient: func(login, password, channel string) TwitchClient {
+			return twitch.NewIRCClient(login, password, channel)
+		},
 	}
 }
 
@@ -269,11 +277,13 @@ func (bm *botManager) logBotEvent(botID, logType, level, message string, context
 	}
 
 	// Write to PostgreSQL (async, don't block bot loop)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = bm.store.CreateBotLog(ctx, log)
-	}()
+	if bm.store != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = bm.store.CreateBotLog(ctx, log)
+		}()
+	}
 
 	// Write to Redis cache (async)
 	if bm.cacheClient != nil {
@@ -308,7 +318,7 @@ func (bm *botManager) loadBots(ctx context.Context) error {
 		}
 		bm.bots[cfg.ID] = &botRuntime{
 			cfg:    cfg,
-			client: twitch.NewIRCClient(cfg.TwitchLogin, cfg.Password, channel),
+			client: bm.newIRCClient(cfg.TwitchLogin, cfg.Password, channel),
 		}
 	}
 	return nil
@@ -399,7 +409,7 @@ func (bm *botManager) CreateBot(ctx context.Context, cfg storage.BotConfig) erro
 	defer bm.mu.Unlock()
 	bm.bots[cfg.ID] = &botRuntime{
 		cfg:    cfg,
-		client: twitch.NewIRCClient(cfg.TwitchLogin, cfg.Password, channel),
+		client: bm.newIRCClient(cfg.TwitchLogin, cfg.Password, channel),
 	}
 
 	return nil
@@ -539,7 +549,7 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	}
 
 	// Пересоздаем клиент на актуальный канал перед запуском.
-	br.client = twitch.NewIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
+	br.client = bm.newIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
 
 	// Подключаемся к Twitch IRC
 	if err := br.client.Connect(); err != nil {
@@ -557,6 +567,8 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	br.running = true
 	br.cfg.Enabled = true
 	bm.mu.Unlock()
+
+	go bm.runBotLoop(ctx, br)
 
 	if persist {
 		if err := bm.store.SetBotEnabled(context.Background(), botID, true); err != nil {
@@ -647,17 +659,16 @@ func (bm *botManager) statusLines() []string {
 }
 
 func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
+	// Capture this run's stop channel: startBot creates a fresh channel per
+	// start, so closing the captured value can never double-close the channel
+	// of a newer run that started after this loop timed out.
+	stopped := br.stopped
+
 	slog.Info("bot started", "bot_id", br.cfg.ID)
 	bm.logBotEvent(br.cfg.ID, "lifecycle", "info", "Bot started", nil)
 
 	// P0-1: Graceful shutdown - ensure we signal when done
 	defer func() {
-		// P0-1: Wait for any pending message to be sent (up to configured delay)
-		if br.cfg.MinDelaySec > 0 {
-			slog.Info("waiting for pending operations before graceful stop", "bot_id", br.cfg.ID)
-			time.Sleep(time.Duration(br.cfg.MinDelaySec) * time.Second)
-		}
-
 		// P0-1: Log reason for stopping
 		reason := "stopped"
 		if br.stopping {
@@ -667,10 +678,10 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		slog.Info("bot stopped", "bot_id", br.cfg.ID, "reason", reason)
 		bm.logBotEvent(br.cfg.ID, "lifecycle", "info", reason, nil)
 
-		// P0-1: Signal that bot has fully stopped
-		if br.stopped != nil {
-			close(br.stopped)
-			br.stopped = nil
+		// P0-1: Signal that bot has fully stopped.
+		// This is the only place the stop channel is closed.
+		if stopped != nil {
+			close(stopped)
 		}
 	}()
 
@@ -746,7 +757,20 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 		if br.disableLLM {
 			slog.Info("LLM disabled, skipping message generation", "bot_id", br.cfg.ID)
 			bm.logBotEvent(br.cfg.ID, "llm", "info", "LLM disabled, bot in monitor-only mode", nil)
-			time.Sleep(time.Duration(rand.Intn(br.cfg.MaxDelaySec-br.cfg.MinDelaySec)+br.cfg.MinDelaySec) * time.Second)
+			monitorDelay := time.Duration(br.cfg.MinDelaySec) * time.Second
+			if span := br.cfg.MaxDelaySec - br.cfg.MinDelaySec; span > 0 {
+				monitorDelay += time.Duration(rand.Intn(span)) * time.Second
+			}
+			if monitorDelay <= 0 {
+				monitorDelay = time.Second
+			}
+			monitorTimer := time.NewTimer(monitorDelay)
+			select {
+			case <-ctx.Done():
+				monitorTimer.Stop()
+				return
+			case <-monitorTimer.C:
+			}
 			continue
 		}
 
@@ -819,10 +843,52 @@ func (bm *botManager) runBotLoop(ctx context.Context, br *botRuntime) {
 				}
 				continue
 			}
+
+			// Only successful real-chat sends count toward messages/min.
+			bm.recordMessageSent()
 		} else {
 			slog.Info("DEBUG MODE: message not sent to Twitch", "bot_id", br.cfg.ID)
 		}
 	}
+}
+
+// recordMessageSent notes a successful Twitch send for the MessagesPerMin
+// stat. Entries older than 60 seconds are pruned and the slice is capped.
+func (bm *botManager) recordMessageSent() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	now := time.Now()
+	bm.messageTimes = append(bm.messageTimes, now)
+
+	cutoff := now.Add(-time.Minute)
+	idx := 0
+	for idx < len(bm.messageTimes) && bm.messageTimes[idx].Before(cutoff) {
+		idx++
+	}
+	if idx > 0 {
+		bm.messageTimes = bm.messageTimes[idx:]
+	}
+
+	if len(bm.messageTimes) > maxMessageTimes {
+		bm.messageTimes = bm.messageTimes[len(bm.messageTimes)-maxMessageTimes:]
+	}
+}
+
+// MessagesPerMin reports the number of successful Twitch sends in the last
+// 60 seconds.
+func (bm *botManager) MessagesPerMin() int {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	cutoff := time.Now().Add(-time.Minute)
+	count := 0
+	for _, ts := range bm.messageTimes {
+		if ts.After(cutoff) {
+			count++
+		}
+	}
+	return count
 }
 
 func (bm *botManager) generateMessage(ctx context.Context, personality string) (string, string, error) {

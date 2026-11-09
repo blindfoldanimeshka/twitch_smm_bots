@@ -76,6 +76,11 @@ func (m *MockBotManager) StopAll() error {
 	return args.Error(0)
 }
 
+func (m *MockBotManager) MessagesPerMin() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
 // MockStore is a mock implementation of storage.Store
 type MockStore struct {
 	mock.Mock
@@ -348,23 +353,23 @@ func TestGetSettings(t *testing.T) {
 		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		expectedSettings := &storage.Settings{
-			ID:               "default",
-			Channels:         []string{"https://www.twitch.tv/test"},
-			DebugMode:        false,
-			DebugChannel:     "",
-			PositivePrompt:   "test prompt",
-			NegativePrompt:   "",
-			MaxTokens:        60,
-			AudioEnabled:     true,
-			RotationEnabled:  false,
-			RotationInterval: 60,
-			LLMProvider:      "openrouter",
-			LLMApiURL:        "https://openrouter.ai/api/v1",
-			LLMModel:         "test-model",
-			LLMApiKey:        "",
+			ID:                 "default",
+			Channels:           []string{"https://www.twitch.tv/test"},
+			DebugMode:          false,
+			DebugChannel:       "",
+			PositivePrompt:     "test prompt",
+			NegativePrompt:     "",
+			MaxTokens:          60,
+			AudioEnabled:       true,
+			RotationEnabled:    false,
+			RotationInterval:   60,
+			LLMProvider:        "openrouter",
+			LLMApiURL:          "https://openrouter.ai/api/v1",
+			LLMModel:           "test-model",
+			LLMApiKey:          "",
 			TwitchClientID:     "test-client-id",
 			TwitchClientSecret: "test-secret",
-			UpdatedAt:        time.Now(),
+			UpdatedAt:          time.Now(),
 		}
 
 		mockStore.On("GetSettings", mock.Anything).Return(expectedSettings, nil)
@@ -407,20 +412,20 @@ func TestUpdateSettings(t *testing.T) {
 		handler := NewHandler(mockManager, mockStore, nil, nil, nil, nil)
 
 		newSettings := storage.Settings{
-			ID:               "default",
-			Channels:         []string{"https://www.twitch.tv/updated"},
-			DebugMode:        true,
-			DebugChannel:     "https://www.twitch.tv/debug",
-			PositivePrompt:   "updated prompt",
-			NegativePrompt:   "",
-			MaxTokens:        100,
-			AudioEnabled:     false,
-			RotationEnabled:  true,
-			RotationInterval: 120,
-			LLMProvider:      "openai",
-			LLMApiURL:        "https://api.openai.com/v1",
-			LLMModel:         "gpt-4",
-			LLMApiKey:        "sk-test",
+			ID:                 "default",
+			Channels:           []string{"https://www.twitch.tv/updated"},
+			DebugMode:          true,
+			DebugChannel:       "https://www.twitch.tv/debug",
+			PositivePrompt:     "updated prompt",
+			NegativePrompt:     "",
+			MaxTokens:          100,
+			AudioEnabled:       false,
+			RotationEnabled:    true,
+			RotationInterval:   120,
+			LLMProvider:        "openai",
+			LLMApiURL:          "https://api.openai.com/v1",
+			LLMModel:           "gpt-4",
+			LLMApiKey:          "sk-test",
 			TwitchClientID:     "new-client-id",
 			TwitchClientSecret: "new-secret",
 		}

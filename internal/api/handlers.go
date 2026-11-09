@@ -28,6 +28,7 @@ type BotManager interface {
 	StopBot(id string) error
 	StartAll(ctx context.Context) error
 	StopAll() error
+	MessagesPerMin() int
 }
 
 type SettingsManager interface {
@@ -111,9 +112,9 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	health := map[string]interface{}{
-		"status": "ok",
+		"status":    "ok",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"checks": map[string]string{},
+		"checks":    map[string]string{},
 	}
 
 	checks := health["checks"].(map[string]string)
@@ -421,7 +422,7 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	stats := StatsDTO{
 		TotalBots:      len(bots),
 		RunningBots:    0,
-		MessagesPerMin: 0,
+		MessagesPerMin: h.manager.MessagesPerMin(),
 		TotalProxies:   0,
 		EnabledProxies: 0,
 	}
