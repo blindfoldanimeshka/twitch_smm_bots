@@ -267,10 +267,17 @@ function forgetTempInbox() {
   }
 }
 
-/** Провайдерские метки времени → «дд.мм чч:мм» в локали пользователя. */
+/**
+ * Провайдерские метки времени → «дд.мм чч:мм» в локали пользователя.
+ * Обнулённый timestamp провайдера (Guerrilla отдаёт «0001-01-01») и всё,
+ * что раньше 2000 года, — не дата, а её отсутствие: показываем «—».
+ */
+const MAIL_MIN_VALID_MS = Date.UTC(2000, 0, 1)
+
 function formatMailTime(iso: string): string {
   const date = new Date(iso)
-  if (!Number.isFinite(date.getTime())) return '—'
+  const time = date.getTime()
+  if (!Number.isFinite(time) || time < MAIL_MIN_VALID_MS) return '—'
   return date.toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
