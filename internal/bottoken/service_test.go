@@ -45,10 +45,14 @@ type setCall struct {
 }
 
 // fakeStore records SetBotToken calls and serves GetBot from a map.
+// setFailures makes the first N writes fail (transient store outage) and
+// setErr fails every remaining write; setAttempts counts all write calls.
 type fakeStore struct {
-	bots     map[string]*storage.BotConfig
-	setCalls []setCall
-	setErr   error
+	bots        map[string]*storage.BotConfig
+	setCalls    []setCall
+	setErr      error
+	setFailures int
+	setAttempts int
 }
 
 func newFakeStore() *fakeStore {
@@ -64,6 +68,11 @@ func (f *fakeStore) GetBot(_ context.Context, id string) (*storage.BotConfig, er
 }
 
 func (f *fakeStore) SetBotToken(_ context.Context, id, accessToken, refreshTokenEnc string, expiresAt time.Time, clientID string, scopes []string) error {
+	f.setAttempts++
+	if f.setFailures > 0 {
+		f.setFailures--
+		return errors.New("db down")
+	}
 	if f.setErr != nil {
 		return f.setErr
 	}
@@ -389,13 +398,52 @@ func TestEnsureFreshStoreFailureAfterRefresh(t *testing.T) {
 	exp := time.Now().Add(1 * time.Minute)
 	cfg := storage.BotConfig{ID: "bot-1", TokenRefreshEnc: enc, TokenExpiresAt: &exp, Password: "oauth:old"}
 
-	// The TTG refresh succeeds, but persisting the rotated pair fails.
+	// The TTG refresh succeeds, but persisting the rotated pair fails every time.
 	store.setErr = errors.New("db down")
 
 	out, err := svc.EnsureFresh(context.Background(), cfg)
 	require.Error(t, err, "a store failure after refresh must be reported")
 	assert.Equal(t, "oauth:old", out.Password, "failed refresh must not report a rotated password")
 	assert.Equal(t, 1, ttg.refreshHits)
+	assert.Equal(t, 3, store.setAttempts, "the store write is retried up to 3 times")
+}
+
+// The provider exchange consumed the old refresh token, so a single transient
+// store failure must not lose the rotated pair: the write is retried (and only
+// the write) until it succeeds, and the caller gets a config matching exactly
+// what ended up in the store.
+func TestEnsureFreshStoreRetriesTransientFailure(t *testing.T) {
+	ttg := newFakeTTG(t)
+	store := newFakeStore()
+	store.setFailures = 2 // the first two writes fail, the third persists the pair
+	cipher := testCipher(t)
+	svc := New(store, cipher, ttg.client)
+
+	enc, err := cipher.Encrypt("oldrefresh")
+	require.NoError(t, err)
+	exp := time.Now().Add(1 * time.Minute)
+	cfg := storage.BotConfig{ID: "bot-1", TokenRefreshEnc: enc, TokenExpiresAt: &exp, Password: "oauth:old"}
+
+	out, err := svc.EnsureFresh(context.Background(), cfg)
+	require.NoError(t, err, "a store outage that clears within the retries must keep the pair")
+
+	assert.Equal(t, 1, ttg.refreshHits, "the provider exchange must not be retried")
+	assert.Equal(t, 3, store.setAttempts, "the write must be attempted up to 3 times")
+
+	require.Len(t, store.setCalls, 1)
+	stored := store.setCalls[0]
+	require.NotNil(t, out.TokenExpiresAt)
+	assert.Equal(t, out.Password, stored.access, "returned access must be the stored access")
+	assert.True(t, stored.expiry.Equal(*out.TokenExpiresAt), "returned expiry must be the stored expiry")
+	assert.Equal(t, out.TokenClientID, stored.clientID)
+	assert.Equal(t, out.TokenScopes, stored.scopes)
+
+	outRefresh, err := cipher.Decrypt(out.TokenRefreshEnc)
+	require.NoError(t, err)
+	storedRefresh, err := cipher.Decrypt(stored.enc)
+	require.NoError(t, err)
+	assert.Equal(t, "newrefresh", outRefresh)
+	assert.Equal(t, outRefresh, storedRefresh, "returned refresh must be the stored refresh")
 }
 
 func TestRefreshNowRequiresStoredRefresh(t *testing.T) {

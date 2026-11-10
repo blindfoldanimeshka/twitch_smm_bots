@@ -51,9 +51,16 @@ const (
 	// exit before giving up on scheduling the cooldown return.
 	presenceStopWait = 5 * time.Second
 
-	// tokenRefreshTimeout bounds the provider round-trip EnsureFresh performs
-	// inside startBot while the manager lock is held.
+	// tokenRefreshTimeout bounds the provider round-trip ensureFreshForStart
+	// performs under tokenMu. It no longer runs while bm.mu is held, but the
+	// bound still keeps a hanging provider from blocking the next bot's
+	// rotation behind the serialising mutex.
 	tokenRefreshTimeout = 20 * time.Second
+
+	// tokenRefreshLead mirrors bottoken's refreshLead: startBot only pays for
+	// a rotation when the stored token expires within this window, so the
+	// common start path never calls the service at all.
+	tokenRefreshLead = 5 * time.Minute
 )
 
 // Presence session states for botRuntime.presenceState.
@@ -376,33 +383,85 @@ type botManager struct {
 	// tokenService rotates imported Twitch tokens before a bot connects.
 	// nil (tests, installs without TOKEN_ENCRYPTION_KEY wiring) means "no
 	// automatic refresh": bots start with the stored password as-is.
-	tokenService *bottoken.Service
+	// *bottoken.Service is the production implementation; tests inject a fake.
+	tokenService tokenRotator
+
+	// tokenMu serialises token refreshes only: it is taken before a provider
+	// round-trip so two bots expiring together cannot stampede the generator,
+	// and it is the only lock held across that round-trip. bm.mu is grabbed
+	// only briefly around the runtime read and write-back, never while the
+	// refresh runs, so manager reads stay responsive. Lock order: tokenMu,
+	// then bm.mu.
+	tokenMu sync.Mutex
 
 	// Presence simulation.
 	presence      presenceConfig
 	presenceAfter func(time.Duration, func()) presenceTimer // default: defaultPresenceAfter
 }
 
+// tokenRotator is the manager's view of the token service: rotate a config's
+// pair just before it expires or refuse. *bottoken.Service is the production
+// implementation; it also satisfies api.TokenService for the HTTP side.
+type tokenRotator interface {
+	EnsureFresh(ctx context.Context, cfg storage.BotConfig) (storage.BotConfig, error)
+}
+
 // SetTokenService wires the token import/refresh service into the manager.
 func (bm *botManager) SetTokenService(svc *bottoken.Service) {
 	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	if svc == nil {
+		bm.tokenService = nil
+		return
+	}
 	bm.tokenService = svc
-	bm.mu.Unlock()
 }
 
-// ensureFreshToken rotates br.cfg's token pair if it expires imminently. The
-// caller must hold bm.mu. It is a no-op when no token service is configured.
-func (bm *botManager) ensureFreshToken(ctx context.Context, br *botRuntime) (storage.BotConfig, error) {
+// ensureFreshForStart rotates botID's token pair before the bot may connect,
+// without ever holding bm.mu across the provider call. It is a no-op when no
+// service is wired, when the runtime is gone or already running, or when the
+// token still has more than tokenRefreshLead of life (same rule as the
+// service). Refreshes are serialised by tokenMu, and the provider call runs
+// on a context detached from parent (WithoutCancel) and bounded by
+// tokenRefreshTimeout, so a spent shared StartAll budget can neither abort an
+// in-flight rotation nor be spent by it. On success the refreshed config is
+// written back to the runtime for startBot to pick up; on error it is
+// returned unchanged.
+func (bm *botManager) ensureFreshForStart(parent context.Context, botID string) error {
 	if bm.tokenService == nil {
-		return br.cfg, nil
+		return nil
 	}
 
-	// The refresh runs while the manager lock is held (startBot), so bound it
-	// to keep one expiring token from stalling every other bot.
-	ctx, cancel := context.WithTimeout(ctx, tokenRefreshTimeout)
+	bm.tokenMu.Lock()
+	defer bm.tokenMu.Unlock()
+
+	bm.mu.RLock()
+	br, ok := bm.bots[botID]
+	if !ok || br.running {
+		bm.mu.RUnlock()
+		return nil
+	}
+	cfg := br.cfg
+	bm.mu.RUnlock()
+
+	if cfg.TokenExpiresAt == nil || cfg.TokenExpiresAt.After(time.Now().Add(tokenRefreshLead)) {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), tokenRefreshTimeout)
 	defer cancel()
 
-	return bm.tokenService.EnsureFresh(ctx, br.cfg)
+	updated, err := bm.tokenService.EnsureFresh(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	bm.mu.Lock()
+	if br, ok := bm.bots[botID]; ok {
+		br.cfg = updated
+	}
+	bm.mu.Unlock()
+	return nil
 }
 
 func normalizeChannelName(raw string) string {
@@ -796,6 +855,13 @@ func (bm *botManager) StopAll() error {
 }
 
 func (bm *botManager) startBot(parent context.Context, botID string, persist bool, disableLLM bool) error {
+	// Imported tokens expire: rotate an expiring pair (or refuse to start)
+	// before the manager lock is taken, so one slow provider round-trip can
+	// neither stall manager reads nor eat a shared StartAll budget.
+	if err := bm.ensureFreshForStart(parent, botID); err != nil {
+		return fmt.Errorf("bot %s: twitch token: %w", botID, err)
+	}
+
 	bm.mu.Lock()
 	br, ok := bm.bots[botID]
 	if !ok {
@@ -819,16 +885,9 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		return fmt.Errorf("no twitch channel configured: set Settings -> channels in UI")
 	}
 
-	// Imported tokens expire: rotate an expiring pair (or refuse to start)
-	// before any password reaches the IRC client.
-	cfg, err := bm.ensureFreshToken(parent, br)
-	if err != nil {
-		bm.mu.Unlock()
-		return fmt.Errorf("bot %s: twitch token: %w", botID, err)
-	}
-	br.cfg = cfg
-
-	// Пересоздаем клиент на актуальный канал перед запуском.
+	// Пересоздаем клиент на актуальный канал перед запуском. ensureFreshForStart
+	// уже записал повёрнутую пару в br.cfg до взятия блокировки, поэтому
+	// br.cfg.Password — актуальный credential.
 	br.client = bm.newIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
 
 	// Подключаемся к Twitch IRC

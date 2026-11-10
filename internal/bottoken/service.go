@@ -48,6 +48,12 @@ var (
 // a bot never connects with a token that dies mid-session.
 const refreshLead = 5 * time.Minute
 
+// storeRetryDelays are the waits between attempts to persist a rotated pair.
+// The provider exchange already consumed the old refresh token, so a transient
+// store failure must not lose the new pair; the exchange itself is never
+// retried. Together with the first attempt this gives 3 store attempts.
+var storeRetryDelays = []time.Duration{100 * time.Millisecond, 300 * time.Millisecond}
+
 // oauthPrefix is what bots.password expects in front of the access token.
 const oauthPrefix = "oauth:"
 
@@ -250,7 +256,10 @@ func (s *Service) refresh(ctx context.Context, cfg storage.BotConfig) (storage.B
 	}
 
 	password := oauthPrefix + access
-	if err := s.store.SetBotToken(ctx, cfg.ID, password, refreshEnc, expiresAt, clientID, scopes); err != nil {
+	// The exchange above consumed the old refresh token: if we dropped the new
+	// pair on a single transient write failure, the stored ciphertext would be
+	// dead forever. Retry the write (never the provider call) before giving up.
+	if err := s.storeRotated(ctx, cfg.ID, password, refreshEnc, expiresAt, clientID, scopes); err != nil {
 		return cfg, fmt.Errorf("bottoken: bot %s: store refreshed token: %w", cfg.ID, err)
 	}
 
@@ -266,6 +275,37 @@ func (s *Service) refresh(ctx context.Context, cfg storage.BotConfig) (storage.B
 		updated.TokenExpiresAt = &expiry
 	}
 	return updated, nil
+}
+
+// storeRotated persists the freshly rotated pair, retrying transient failures
+// with the storeRetryDelays backoff. It stops early when ctx is done (the
+// remaining attempts could not succeed) and reports the last store error.
+// Callers must not wrap token material into that error: SetBotToken failures
+// are storage errors, not verdicts on the token.
+func (s *Service) storeRotated(ctx context.Context, id, password, refreshEnc string, expiresAt time.Time, clientID string, scopes []string) error {
+	var err error
+	for attempt := 0; attempt <= len(storeRetryDelays); attempt++ {
+		if attempt > 0 && !waitBackoff(ctx, storeRetryDelays[attempt-1]) {
+			break
+		}
+		err = s.store.SetBotToken(ctx, id, password, refreshEnc, expiresAt, clientID, scopes)
+		if err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// waitBackoff sleeps for d and reports whether it completed before ctx ended.
+func waitBackoff(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // expiresAfterNow converts a provider expires_in (seconds) into an absolute
