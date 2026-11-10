@@ -1,5 +1,5 @@
 {
-  "generated": "2026-11-09",
+  "generated": "2026-11-11",
   "project": "twitch-smm",
   "root": ".",
   "nodes": [
@@ -21,13 +21,16 @@
     { "id": "cache", "type": "go-package", "path": "internal/cache", "summary": "Redis logs, limits, bot stats" },
     { "id": "auth", "type": "go-package", "path": "internal/auth", "summary": "bcrypt password hash/check" },
     { "id": "migrations", "type": "go-package", "path": "internal/migrations", "summary": "SQL migration runner" },
+    { "id": "tokencrypt", "type": "go-package", "path": "internal/tokencrypt", "summary": "AES-256-GCM cipher for refresh tokens, base64 key from TOKEN_ENCRYPTION_KEY (32 bytes)" },
+    { "id": "twitchtoken", "type": "go-package", "path": "internal/twitchtoken", "summary": "Twitch Token Generator v2 client (shared app): Validate/Refresh, never logs tokens" },
+    { "id": "bottoken", "type": "go-package", "path": "internal/bottoken", "summary": "token import/refresh service: Import, EnsureFresh (5-min lead), RefreshNow, Status; sentinel errors only" },
     { "id": "frontend-app", "type": "react", "path": "frontend/src/App.tsx", "summary": "app shell, pages, ErrorBoundary" },
     { "id": "frontend-client", "type": "ts", "path": "frontend/src/api/client.ts", "summary": "axios client, Bot/Settings/Stats/LLMStatus types" },
     { "id": "frontend-ws", "type": "ts", "path": "frontend/src/hooks/useWebSocket.ts", "summary": "WebSocket reconnect and log store" },
     { "id": "frontend-botform", "type": "ts", "path": "frontend/src/hooks/useBotForm.ts", "summary": "bot form validation/state" },
     { "id": "frontend-logstore", "type": "ts", "path": "frontend/src/stores/logStore.ts", "summary": "bot/settings logs, presence events" },
     { "id": "frontend-dashboard", "type": "react", "path": "frontend/src/pages/Dashboard.tsx", "summary": "stats, bots, stream preview" },
-    { "id": "frontend-bots", "type": "react", "path": "frontend/src/pages/Bots.tsx", "summary": "bot table/create/edit/start/stop/logs" },
+    { "id": "frontend-bots", "type": "react", "path": "frontend/src/pages/Bots.tsx", "summary": "bot table/create/edit/start/stop/logs, token import and status" },
     { "id": "frontend-settings", "type": "react", "path": "frontend/src/pages/Settings.tsx", "summary": "settings sections and save" },
     { "id": "planned-public-gql", "type": "planned-go", "path": "internal/twitch/public_stream.go", "summary": "Twitch public GraphQL stream info" },
     { "id": "planned-chat-monitor", "type": "planned-go", "path": "internal/twitch/chat_monitor.go", "summary": "anonymous read-only IRC active chatters/messages" },
@@ -46,6 +49,11 @@
     { "from": "entrypoint", "to": "audio", "kind": "stream context" },
     { "from": "entrypoint", "to": "cache", "kind": "logs/limits/stats" },
     { "from": "entrypoint", "to": "api-ws", "kind": "broadcast events" },
+    { "from": "entrypoint", "to": "bottoken", "kind": "EnsureFresh before IRC connect in startBot (5-min expiry lead)" },
+    { "from": "api", "to": "bottoken", "kind": "POST/GET /api/bots/{id}/token, POST /api/bots/{id}/token/refresh" },
+    { "from": "bottoken", "to": "storage", "kind": "SetBotToken/GetBot" },
+    { "from": "bottoken", "to": "tokencrypt", "kind": "refresh token kept only as ciphertext" },
+    { "from": "bottoken", "to": "twitchtoken", "kind": "validate/refresh through generator shared app" },
     { "from": "api-server", "to": "api-handlers", "kind": "routes" },
     { "from": "api-handlers", "to": "api-dto", "kind": "responses" },
     { "from": "api-handlers", "to": "api-ws", "kind": "broadcast" },
@@ -78,6 +86,10 @@
     "Public Twitch GQL is unofficial and must degrade gracefully",
     "Presence simulation must not affect viewer_count",
     "Storage tests are integration tests: they need Postgres; without it part of them fails on connect instead of skipping",
-    "pongReply must answer both PING :payload and PING payload with a well-formed PONG :payload; this invariant covers ChatMonitor (the anonymous reader) only, the bot IRCClient (internal/twitch/irc.go) has its own inline PING handler not covered by pongReply"
+    "pongReply must answer both PING :payload and PING payload with a well-formed PONG :payload; this invariant covers ChatMonitor (the anonymous reader) only, the bot IRCClient (internal/twitch/irc.go) has its own inline PING handler not covered by pongReply",
+    "refresh tokens are stored only as tokencrypt AES-256-GCM ciphertext in bots.token_refresh_enc; without a usable TOKEN_ENCRYPTION_KEY (base64, 32 bytes) refresh import is rejected with ErrEncryptionUnavailable (503) while access-only import keeps working",
+    "token values are never logged, never returned by the API and never embedded in error strings; callers get bottoken sentinel errors and metadata-only Status (valid/login/expires_at/has_refresh/scopes)",
+    "the access token lives in bots.password as oauth:<token> (IRC PASS format); bottoken strips/re-adds the prefix, no separate column and no un-prefixed writes",
+    "startBot calls bottoken.EnsureFresh before connecting: a token expiring within 5 minutes is rotated through the generator's shared app (internal/twitchtoken, twitchtokengenerator.com) and persisted first; on rotation error the bot does not start with a stale password"
   ]
 }

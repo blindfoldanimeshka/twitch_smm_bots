@@ -1,6 +1,6 @@
 # Code Graph — Twitch SMM
 
-Дата: 2026-11-09
+Дата: 2026-11-11
 Назначение: быстрый вход для ИИ-агентов. Читай этот файл перед изменением кода,
 затем открывай только нужные узлы. Машиночитаемая версия: `docs/code-graph.json`.
 
@@ -64,6 +64,9 @@ flowchart TD
 | Audio | `internal/audio` | streamlink + ffmpeg + whisper.cpp STT | `Service`, `Config`, `transcribe` |
 | Auth | `internal/auth` | bcrypt-пароли ботов | `HashPassword`, `CheckPassword` |
 | Migrations | `internal/migrations` | применение SQL-миграций | `Migrator` |
+| Token crypto | `internal/tokencrypt` | AES-256-GCM для refresh-токенов (base64 nonce‖ciphertext‖tag), ключ из `TOKEN_ENCRYPTION_KEY` | `Cipher`, `NewCipher`, `Encrypt`, `Decrypt` |
+| Token provider | `internal/twitchtoken` | клиент Twitch Token Generator v2 (общее приложение генератора): validate/refresh | `Client`, `NewClient`, `Validate`, `Refresh`, `Validation`, `Tokens` |
+| Token service | `internal/bottoken` | импорт/ротация токенов ботов поверх storage + cipher + provider | `Service`, `Import`, `EnsureFresh`, `RefreshNow`, `Status`, `StatusOf`, `Err*` сентинелы |
 
 ### Планируемые backend-узлы (см. план UI/Twitch)
 
@@ -90,6 +93,9 @@ flowchart TD
 | POST | `/api/bots/{id}/start` | `StartBot` | запустить |
 | POST | `/api/bots/{id}/stop` | `StopBot` | остановить |
 | GET | `/api/bots/{id}/logs` | `GetBotLogs` | логи бота |
+| POST | `/api/bots/{id}/token` | `ImportBotToken` | импорт Twitch токена (access + опционально refresh); ответ — только метаданные |
+| GET | `/api/bots/{id}/token` | `GetBotToken` | статус токена бота (без значений токенов) |
+| POST | `/api/bots/{id}/token/refresh` | `RefreshBotToken` | принудительная ротация через генератор |
 | POST | `/api/bots/start-all` | `StartAll` | запустить всех |
 | POST | `/api/bots/stop-all` | `StopAll` | остановить всех |
 | GET | `/api/stats` | `GetStats` | total/running/messages_per_min |
@@ -233,6 +239,28 @@ GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удалены.
     Инвариант касается только `ChatMonitor`: ботовый клиент `IRCClient`
     (`internal/twitch/irc.go:264-271`) имеет собственный inline-обработчик
     PING, и `pongReply` его не покрывает.
+15. **Refresh-токен — только шифртекст.** В БД (`bots.token_refresh_enc`)
+    хранится исключительно результат `internal/tokencrypt` (AES-256-GCM,
+    base64). Plaintext refresh-токен не пишется ни при каком пути. Ключ —
+    env `TOKEN_ENCRYPTION_KEY` (base64, ровно 32 байта, `openssl rand
+    -base64 32`); без рабочего ключа импорт refresh-токена отклоняется с
+    `ErrEncryptionUnavailable` (503), access-only импорт продолжает работать.
+16. **Токены не логируются и не возвращаются.** Значения access/refresh
+    токенов не попадают в логи, в ответы API и в текст ошибок — наружу
+    идут только сентинелы `bottoken.Err*` и метаданные (`Status`:
+    valid/login/expires_at/has_refresh/scopes). Не добавляй токены в
+    slog-вызовы, DTO и сообщения ошибок.
+17. **Access-токен живёт в `bots.password` как `oauth:<token>`.** Это единственный
+    формат, который ожидает IRC PASS. `bottoken` сам срезает/возвращает
+    префикс; не заводий отдельную колонку для access-токена и не пиши его
+    без `oauth:`.
+18. **Автообновление токена в `startBot`.** Перед подключением `startBot`
+    вызывает `bottoken.EnsureFresh`: если токен истекает в пределах
+    5 минут, пара обновляется через общее приложение генератора
+    (`internal/twitchtoken` → twitchtokengenerator.com, а не через
+    собственный Client ID) и сохраняется до коннекта. При ошибке ротации
+    `startBot` возвращает ошибку и бот не стартует — прежний (просроченный)
+    пароль в IRC не отдаётся. Не начинай обмен токенами вне `EnsureFresh`.
 
 ## 9. Команды
 

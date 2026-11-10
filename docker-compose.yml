@@ -66,6 +66,7 @@ services:
       - OPENROUTER_REFERER=${OPENROUTER_REFERER:-http://localhost:3000}
       - OPENROUTER_TITLE=${OPENROUTER_TITLE:-Twitch SMM Bot Farm}
       - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:-}
       - AUDIO_STT_URL=${AUDIO_STT_URL:-http://stt:9000/v1/audio/transcriptions}
       - AUDIO_STT_MODEL=${AUDIO_STT_MODEL:-whisper-1}
       - AUDIO_STT_API_KEY=${AUDIO_STT_API_KEY:-}
