@@ -60,13 +60,15 @@ flowchart TD
 | LLM | `internal/llm` | OpenRouter, free-first + paid fallback, ключи, статус | `Config`, `EnvConfig`, `DBConfig`, `ResolveConfig`, `Client`, `Reconfigure`, `Status` |
 | Twitch IRC | `internal/twitch/irc.go` | исходящие сообщения, reconnect, rate limit | `IRCClient`, `Connect`, `SendMessage`, `readLoop` |
 | Twitch Helix | `internal/twitch/helix.go` | опциональные Client ID/Secret, stream info, validation | `HelixClient`, `GetStreamInfo`, `ValidateAccount` |
-| Cache | `internal/cache` | Redis: логи, лимиты, статистика | `Client`, `GetBotLogs`, `AddBotLog`, `IncrementBotStats` |
+| Cache | `internal/cache` | Redis: логи, лимиты, статистика, temp-mail сессии | `Client`, `GetBotLogs`, `AddBotLog`, `IncrementBotStats`, `SetTempMailSession` |
 | Audio | `internal/audio` | streamlink + ffmpeg + whisper.cpp STT | `Service`, `Config`, `transcribe` |
 | Auth | `internal/auth` | bcrypt-пароли ботов | `HashPassword`, `CheckPassword` |
 | Migrations | `internal/migrations` | применение SQL-миграций | `Migrator` |
 | Token crypto | `internal/tokencrypt` | AES-256-GCM для refresh-токенов (base64 nonce‖ciphertext‖tag), ключ из `TOKEN_ENCRYPTION_KEY` | `Cipher`, `NewCipher`, `Encrypt`, `Decrypt` |
 | Token provider | `internal/twitchtoken` | клиент Twitch Token Generator v2 (общее приложение генератора): validate/refresh | `Client`, `NewClient`, `Validate`, `Refresh`, `Validation`, `Tokens` |
 | Token service | `internal/bottoken` | импорт/ротация токенов ботов поверх storage + cipher + provider | `Service`, `Import`, `EnsureFresh`, `RefreshNow`, `Status`, `StatusOf`, `Err*` сентинелы |
+| Temp mail client | `internal/guerrilla` | клиент публичного Guerrilla Mail API | `Client`, `NewClient`, `Create`, `List`, `Fetch`, `Delete`, `Inbox`, `Message` |
+| Temp mail service | `internal/tempmail` | сессии ящиков в Redis (TTL 1 час), обрезка HTML | `Service`, `New`, `Cache`, `Create`, `Messages`, `Message`, `Delete`, `ErrInboxNotFound` |
 
 ### Планируемые backend-узлы (см. план UI/Twitch)
 
@@ -108,6 +110,10 @@ flowchart TD
 | GET | `/api/settings/test-audio` | `TestAudio` | тест аудио |
 | POST | `/api/settings/test-llm` | `TestLLM` | тест LLM |
 | GET | `/api/llm/status` | `GetLLMStatus` | OpenRouter статус/бюджет |
+| POST | `/api/temp-mail/inbox` | `CreateTempInbox` | создать temp-ящик (Guerrilla), опционально alias |
+| GET | `/api/temp-mail/inbox/{id}` | `GetTempInbox` | ящик + список писем; истёкший/чужой id → 404 |
+| GET | `/api/temp-mail/inbox/{id}/messages/{mailID}` | `GetTempMessage` | текст письма (HTML вырезан на бэкенде) |
+| DELETE | `/api/temp-mail/inbox/{id}` | `DeleteTempInbox` | удалить ящик и сессию |
 | GET | `/api/twitch/stream` | planned | uptime/viewers/chat/player data |
 | GET | `/api/twitch/stream` | `GetStreamStatus` (planned) | канал + статус |
 
@@ -261,6 +267,19 @@ GooeyNav, TiltCard, FloatingProviderStatus, StatusBar) удалены.
     собственный Client ID) и сохраняется до коннекта. При ошибке ротации
     `startBot` возвращает ошибку и бот не стартует — прежний (просроченный)
     пароль в IRC не отдаётся. Не начинай обмен токенами вне `EnsureFresh`.
+19. **Temp-mail: `sid_token` не покидает бэкенд.** Сессия Guerrilla хранится
+    только в Redis (`tempmail:<id>`, TTL 1 час) и не отдаётся ни в ответах,
+    ни в логах, ни в текстах ошибок — наружу идёт только наш `id` ящика.
+    Истёкший или неизвестный `id` → 404, сбой Guerrilla (429/5xx/таймаут) → 502.
+20. **Temp-mail: письма только как текст.** Тело письма — чужой HTML: бэкенд
+    вырезает теги (`script`/`style` включительно), фронтенд рендерит результат
+    текстом, никогда через HTML. Ретеншен ящика — 1 час (TTL Redis совпадает с
+    часовым удалением писем на стороне Guerrilla).
+21. **Temp-mail — не для обхода верификации.** Эндпоинты существуют для
+    собственных тестовых писем проекта и не должны использоваться для
+    регистрации/обхода верификации сторонних сервисов (см.
+    `docs/TEMPORARY_MAIL.md`). `tempfastmail` контейнер — opt-in профиль
+    `mail`, по умолчанию не запускается.
 
 ## 9. Команды
 
@@ -296,6 +315,7 @@ Invoke-RestMethod -Headers $h http://localhost:8080/api/llm/status
 | Страницы | `frontend/src/pages/*` |
 | Боты UI | `frontend/src/pages/Bots.tsx`, `components/BotsTable.tsx`, `BotModal.tsx` |
 | Настройки UI | `frontend/src/pages/Settings.tsx` |
+| Временная почта | `internal/guerrilla/client.go`, `internal/tempmail/service.go`, `docs/TEMPORARY_MAIL.md` |
 
 ## 11. Документы
 
@@ -303,3 +323,4 @@ Invoke-RestMethod -Headers $h http://localhost:8080/api/llm/status
 - План: `docs/superpowers/plans/2026-11-09-ui-simplification-twitch-monitoring.md`
 - OpenRouter/STT: `docs/superpowers/specs/2026-11-09-openrouter-whispercpp-design.md`
 - Аудио: `docs/AUDIO_TRANSCRIPTION.md`
+- Временная почта: `docs/TEMPORARY_MAIL.md`

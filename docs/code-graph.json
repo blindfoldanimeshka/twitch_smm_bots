@@ -24,6 +24,8 @@
     { "id": "tokencrypt", "type": "go-package", "path": "internal/tokencrypt", "summary": "AES-256-GCM cipher for refresh tokens, base64 key from TOKEN_ENCRYPTION_KEY (32 bytes)" },
     { "id": "twitchtoken", "type": "go-package", "path": "internal/twitchtoken", "summary": "Twitch Token Generator v2 client (shared app): Validate/Refresh, never logs tokens" },
     { "id": "bottoken", "type": "go-package", "path": "internal/bottoken", "summary": "token import/refresh service: Import, EnsureFresh (5-min lead), RefreshNow, Status; sentinel errors only" },
+    { "id": "guerrilla", "type": "go-package", "path": "internal/guerrilla", "summary": "public Guerrilla Mail API client (api.guerrillamail.com/ajax.php): Create/List/Fetch/Delete, 10s timeout" },
+    { "id": "tempmail", "type": "go-package", "path": "internal/tempmail", "summary": "temp mail service: guerrilla inboxes with Redis session (tempmail:<id>, 1h TTL), HTML stripped to text, own inbox id exposed" },
     { "id": "frontend-app", "type": "react", "path": "frontend/src/App.tsx", "summary": "app shell, pages, ErrorBoundary" },
     { "id": "frontend-client", "type": "ts", "path": "frontend/src/api/client.ts", "summary": "axios client, Bot/Settings/Stats/LLMStatus types" },
     { "id": "frontend-ws", "type": "ts", "path": "frontend/src/hooks/useWebSocket.ts", "summary": "WebSocket reconnect and log store" },
@@ -54,6 +56,9 @@
     { "from": "bottoken", "to": "storage", "kind": "SetBotToken/GetBot" },
     { "from": "bottoken", "to": "tokencrypt", "kind": "refresh token kept only as ciphertext" },
     { "from": "bottoken", "to": "twitchtoken", "kind": "validate/refresh through generator shared app" },
+    { "from": "api", "to": "tempmail", "kind": "POST /api/temp-mail/inbox, GET /api/temp-mail/inbox/{id}, GET /api/temp-mail/inbox/{id}/messages/{mailID}, DELETE /api/temp-mail/inbox/{id}" },
+    { "from": "tempmail", "to": "guerrilla", "kind": "create/list/fetch/delete via the public Guerrilla API" },
+    { "from": "tempmail", "to": "cache", "kind": "sid session stored as tempmail:<id> with 1h TTL" },
     { "from": "api-server", "to": "api-handlers", "kind": "routes" },
     { "from": "api-handlers", "to": "api-dto", "kind": "responses" },
     { "from": "api-handlers", "to": "api-ws", "kind": "broadcast" },
@@ -90,6 +95,9 @@
     "refresh tokens are stored only as tokencrypt AES-256-GCM ciphertext in bots.token_refresh_enc; without a usable TOKEN_ENCRYPTION_KEY (base64, 32 bytes) refresh import is rejected with ErrEncryptionUnavailable (503) while access-only import keeps working",
     "token values are never logged, never returned by the API and never embedded in error strings; callers get bottoken sentinel errors and metadata-only Status (valid/login/expires_at/has_refresh/scopes)",
     "the access token lives in bots.password as oauth:<token> (IRC PASS format); bottoken strips/re-adds the prefix, no separate column and no un-prefixed writes",
-    "startBot calls bottoken.EnsureFresh before connecting: a token expiring within 5 minutes is rotated through the generator's shared app (internal/twitchtoken, twitchtokengenerator.com) and persisted first; on rotation error the bot does not start with a stale password"
+    "startBot calls bottoken.EnsureFresh before connecting: a token expiring within 5 minutes is rotated through the generator's shared app (internal/twitchtoken, twitchtokengenerator.com) and persisted first; on rotation error the bot does not start with a stale password",
+    "the guerrilla sid_token never leaves the backend: it is stored only in Redis as tempmail:<id> and is never returned by the API, logged or embedded in error text; clients get only our inbox id, an expired/unknown id returns 404 and Guerrilla failures return 502",
+    "temp mail inboxes live 1 hour: the Redis session TTL matches Guerrilla's own 1h mail removal",
+    "temp mail message bodies are third-party HTML: the backend strips all tags (script/style included) and the UI renders the body as text only, never as HTML"
   ]
 }
