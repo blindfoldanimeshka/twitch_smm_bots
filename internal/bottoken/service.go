@@ -13,7 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
+	"net/http"
 	"strings"
 	"time"
 
@@ -289,32 +289,28 @@ func stripOAuthPrefix(token string) string {
 	return t
 }
 
-// providerStatusMarker prefixes the twitchtoken non-2xx error message. That
-// package keeps the status type unexported, so the code is recovered from the
-// message — which by construction contains no token material.
-const providerStatusMarker = " failed with status "
-
-// wrapProviderError classifies a twitchtoken failure: a 4xx answer means the
-// provider rejected the token itself (rejection sentinel, mapped to 400 by the
-// API), anything else — transport, 5xx, undecodable body — is an upstream
-// failure (ErrUpstream, 502).
+// wrapProviderError classifies a twitchtoken failure. A 4xx answer that
+// judges the credential (bad signature, unknown or unauthorised token) is the
+// rejection sentinel — the API maps it to 400 so the user can re-import.
+// Capacity answers (429, 408), 5xx and plain transport/decode failures say
+// nothing about the token, so they are ErrUpstream (502).
 func wrapProviderError(op string, rejection error, err error) error {
-	if status, ok := providerStatus(err); ok && status >= 400 && status < 500 {
+	if status, ok := twitchtoken.StatusCode(err); ok && isTokenRejection(status) {
 		return fmt.Errorf("bottoken: %s rejected the token (status %d): %w", op, status, rejection)
 	}
 	return fmt.Errorf("bottoken: %s request failed: %w: %w", op, ErrUpstream, err)
 }
 
-// providerStatus extracts the HTTP status out of a twitchtoken error message.
-func providerStatus(err error) (int, bool) {
-	msg := err.Error()
-	idx := strings.LastIndex(msg, providerStatusMarker)
-	if idx < 0 {
-		return 0, false
+// isTokenRejection reports whether an HTTP status is the provider's verdict on
+// the credential itself. It is an allowlist, not "every 4xx": a wrong rejection
+// tells the user to throw away a good token, while a wrong 502 only asks them to
+// retry. Rate limiting (429), request timeouts (408) and unexpected codes such
+// as 404/405/422 therefore stay upstream.
+func isTokenRejection(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	default:
+		return false
 	}
-	code, convErr := strconv.Atoi(strings.TrimSpace(msg[idx+len(providerStatusMarker):]))
-	if convErr != nil {
-		return 0, false
-	}
-	return code, true
 }

@@ -3,6 +3,7 @@ package twitchtoken
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -258,6 +259,56 @@ func TestCancelledContext(t *testing.T) {
 	_, err := c.Validate(ctx, testAccessToken)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), testAccessToken)
+}
+
+// StatusCode is the contract callers use instead of parsing error text: an HTTP
+// answer is reported with its status, and anything that never got one is false.
+func TestStatusCodeFromAPIError(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"success":false,"message":"slow down `+testAccessToken+`"}`)
+	})
+
+	_, err := c.Validate(context.Background(), testAccessToken)
+	require.Error(t, err)
+
+	status, ok := StatusCode(err)
+	assert.True(t, ok, "a non-2xx answer carries a provider status")
+	assert.Equal(t, http.StatusTooManyRequests, status)
+
+	// The same error stays token-free.
+	assert.NotContains(t, err.Error(), testAccessToken)
+}
+
+func TestStatusCodeWithoutProviderAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	url, httpClient := srv.URL, srv.Client()
+	srv.Close() // every request from here on fails in the transport
+
+	_, err := NewClient(url, httpClient).Validate(context.Background(), testAccessToken)
+	require.Error(t, err)
+
+	status, ok := StatusCode(err)
+	assert.False(t, ok, "a transport failure carries no provider status")
+	assert.Equal(t, 0, status)
+
+	// Errors from outside the package carry nothing either.
+	_, ok = StatusCode(errors.New("unrelated"))
+	assert.False(t, ok)
+}
+
+func TestStatusCodeOnUnsuccessfulBody(t *testing.T) {
+	// HTTP 200 with success:false is rejected by the client, but it is not an
+	// HTTP error: callers must not read a token verdict out of it.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":false,"message":"invalid request"}`)
+	})
+
+	_, err := c.Refresh(context.Background(), testRefreshToken)
+	require.Error(t, err)
+
+	_, ok := StatusCode(err)
+	assert.False(t, ok, "an HTTP 200 body saying no is not an HTTP status")
 }
 
 func TestNewClientDefaults(t *testing.T) {

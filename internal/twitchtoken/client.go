@@ -116,6 +116,20 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("twitchtoken: %s failed with status %d", e.op, e.status)
 }
 
+// StatusCode reports the HTTP status behind an error returned by Validate or
+// Refresh. ok is true only when the provider answered with a non-2xx status;
+// transport failures, undecodable bodies and unsuccessful-but-200 payloads all
+// return (0, false). Callers use this to tell "the token was rejected" from
+// "the provider did not answer" without parsing the error text, which is not
+// part of the package's contract.
+func StatusCode(err error) (int, bool) {
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		return apiErr.status, true
+	}
+	return 0, false
+}
+
 // post performs a JSON POST and decodes the response into out.
 func (c *Client) post(ctx context.Context, op, path string, body, out any) error {
 	data, err := json.Marshal(body)

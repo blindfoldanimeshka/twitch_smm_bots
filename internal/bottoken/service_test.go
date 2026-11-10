@@ -101,14 +101,14 @@ func newFakeTTG(t *testing.T) *fakeTTG {
 				w.WriteHeader(f.validateCode)
 				return
 			}
-			_, _ = w.Write([]byte(`{"username":"` + f.validateUser + `","user_id":"42","client_id":"cid","expires_in":10000,"scopes":["chat:read","chat:edit"]}`))
+			_, _ = w.Write([]byte(`{"success":true,"username":"` + f.validateUser + `","user_id":"42","client_id":"cid","expires_in":10000,"scopes":["chat:read","chat:edit"]}`))
 		case "/api/v2/tokens/refresh":
 			f.refreshHits++
 			if f.refreshCode != 200 || !f.refreshOK {
 				w.WriteHeader(f.refreshCode)
 				return
 			}
-			_, _ = w.Write([]byte(`{"access_token":"newaccess","refresh_token":"newrefresh","client_id":"cid","expires_in":5000,"scopes":["chat:read","chat:edit"]}`))
+			_, _ = w.Write([]byte(`{"success":true,"access_token":"newaccess","refresh_token":"newrefresh","client_id":"cid","expires_in":5000,"scopes":["chat:read","chat:edit"]}`))
 		default:
 			t.Errorf("unexpected TTG path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -189,6 +189,64 @@ func TestImportUpstreamFailureNotInvalid(t *testing.T) {
 	_, err := svc.Import(context.Background(), "bot-1", "cooluser", "abc", "")
 	assert.ErrorIs(t, err, ErrUpstream)
 	assert.NotErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestImportProviderBadRequestIsInvalidToken(t *testing.T) {
+	ttg := newFakeTTG(t)
+	ttg.validateCode = http.StatusBadRequest
+	store := newFakeStore()
+	svc := New(store, testCipher(t), ttg.client)
+
+	_, err := svc.Import(context.Background(), "bot-1", "cooluser", "abc", "")
+	assert.ErrorIs(t, err, ErrInvalidToken)
+	assert.Empty(t, store.setCalls)
+}
+
+// Rate limiting is a capacity problem, not a verdict about the token: it must
+// stay ErrUpstream so the API never tells the user their token is invalid.
+func TestImportProviderRateLimitIsUpstream(t *testing.T) {
+	ttg := newFakeTTG(t)
+	ttg.validateCode = http.StatusTooManyRequests
+	store := newFakeStore()
+	svc := New(store, testCipher(t), ttg.client)
+
+	_, err := svc.Import(context.Background(), "bot-1", "cooluser", "abc", "")
+	assert.ErrorIs(t, err, ErrUpstream)
+	assert.NotErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestRefreshProviderRateLimitIsUpstream(t *testing.T) {
+	ttg := newFakeTTG(t)
+	ttg.refreshCode = http.StatusTooManyRequests
+	store := newFakeStore()
+	cipher := testCipher(t)
+	svc := New(store, cipher, ttg.client)
+
+	enc, err := cipher.Encrypt("oldrefresh")
+	require.NoError(t, err)
+	store.bots["bot-1"] = &storage.BotConfig{ID: "bot-1", TokenRefreshEnc: enc}
+
+	_, err = svc.RefreshNow(context.Background(), "bot-1")
+	assert.ErrorIs(t, err, ErrUpstream)
+	assert.NotErrorIs(t, err, ErrTokenExpired)
+}
+
+// An HTTP 200 whose body says success:false carries no HTTP status, so it is
+// reported as "the provider gave no usable answer" (ErrUpstream) rather than a
+// token verdict.
+func TestImportUnsuccessfulBodyIsUpstream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"success":false,"message":"provider detail"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	store := newFakeStore()
+	svc := New(store, testCipher(t), twitchtoken.NewClient(srv.URL, nil))
+
+	_, err := svc.Import(context.Background(), "bot-1", "cooluser", "abc", "")
+	assert.ErrorIs(t, err, ErrUpstream)
+	assert.NotContains(t, err.Error(), "provider detail")
+	assert.NotContains(t, err.Error(), "abc")
 }
 
 func TestImportEmptyAccessTokenIsInvalid(t *testing.T) {
