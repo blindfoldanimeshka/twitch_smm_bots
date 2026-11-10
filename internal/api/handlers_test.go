@@ -19,6 +19,7 @@ import (
 	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/tempmail"
 	"twitch-smm-bot/internal/twitch"
 )
 
@@ -1725,4 +1726,313 @@ func TestBotDTOIncludesTokenStatus(t *testing.T) {
 	assert.False(t, legacy.TokenValid)
 	assert.False(t, legacy.TokenHasRefresh)
 	assert.Nil(t, legacy.TokenExpiresAt)
+}
+
+// --- Temp mail endpoints ---------------------------------------------------
+
+// fakeTempMailService is a programmable TempMailService stub. The returned
+// values are the service's public types, which carry no sid by construction;
+// the tests below additionally assert no "sid" appears in a response body.
+type fakeTempMailService struct {
+	inbox      *tempmail.Inbox
+	createErr  error
+	msgsErr    error
+	message    *tempmail.Message
+	messageErr error
+	deleteErr  error
+
+	gotAlias   string
+	gotInboxID string
+	gotMsgID   string
+	gotMailID  string
+	gotDelID   string
+}
+
+func (f *fakeTempMailService) Create(_ context.Context, alias string) (*tempmail.Inbox, error) {
+	f.gotAlias = alias
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	return f.inbox, nil
+}
+
+func (f *fakeTempMailService) Messages(_ context.Context, id string) (*tempmail.Inbox, error) {
+	f.gotInboxID = id
+	if f.msgsErr != nil {
+		return nil, f.msgsErr
+	}
+	return f.inbox, nil
+}
+
+func (f *fakeTempMailService) Message(_ context.Context, id, mailID string) (*tempmail.Message, error) {
+	f.gotMsgID, f.gotMailID = id, mailID
+	if f.messageErr != nil {
+		return nil, f.messageErr
+	}
+	return f.message, nil
+}
+
+func (f *fakeTempMailService) Delete(_ context.Context, id string) error {
+	f.gotDelID = id
+	return f.deleteErr
+}
+
+func tempMailHandler(t *testing.T, svc TempMailService) *Handler {
+	t.Helper()
+	handler := NewHandler(new(MockBotManager), new(MockStore), nil, nil, nil, nil)
+	if svc != nil {
+		handler.SetTempMailService(svc)
+	}
+	return handler
+}
+
+func sampleTempInbox() *tempmail.Inbox {
+	exp := time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
+	return &tempmail.Inbox{
+		ID:        "ab12cd34ef56ab78cd90ef12ab34cd56",
+		Email:     "johnny@guerrillamail.com",
+		ExpiresAt: exp,
+		Messages: []tempmail.Message{{
+			ID: "101", From: "sender@example.com", Subject: "Weekly digest",
+			Excerpt: "top story", ReceivedAt: exp,
+		}},
+	}
+}
+
+// assertNoSID proves the response JSON carries no sid field and no token
+// material from a sample session.
+func assertNoSID(t *testing.T, body string) {
+	t.Helper()
+	assert.NotContains(t, strings.ToLower(body), "sid", "response JSON must not expose a sid field")
+	assert.NotContains(t, body, "s3cr3t")
+}
+
+func TestCreateTempInboxReturnsPublicInbox(t *testing.T) {
+	svc := &fakeTempMailService{inbox: sampleTempInbox()}
+	handler := tempMailHandler(t, svc)
+
+	body, _ := json.Marshal(CreateTempInboxRequest{Alias: "johnny"})
+	req := httptest.NewRequest(http.MethodPost, "/api/temp-mail/inbox", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.CreateTempInbox(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "johnny", svc.gotAlias)
+
+	var dto TempMailInbox
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dto))
+	assert.Equal(t, "ab12cd34ef56ab78cd90ef12ab34cd56", dto.ID)
+	assert.Equal(t, "johnny@guerrillamail.com", dto.Email)
+	assert.False(t, dto.ExpiresAt.IsZero())
+	assertNoSID(t, w.Body.String())
+}
+
+func TestCreateTempInboxWithoutBodyIsAllowed(t *testing.T) {
+	svc := &fakeTempMailService{inbox: sampleTempInbox()}
+	handler := tempMailHandler(t, svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/temp-mail/inbox", strings.NewReader(""))
+	w := httptest.NewRecorder()
+
+	handler.CreateTempInbox(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "", svc.gotAlias, "an absent body means no alias")
+}
+
+func TestCreateTempInboxMalformedBodyIs400(t *testing.T) {
+	handler := tempMailHandler(t, &fakeTempMailService{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/temp-mail/inbox", strings.NewReader("{not json"))
+	w := httptest.NewRecorder()
+
+	handler.CreateTempInbox(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateTempInboxErrorMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"invalid alias", fmt.Errorf("tempmail: %q: %w", "bad!", tempmail.ErrInvalidAlias), http.StatusBadRequest},
+		{"provider failure", fmt.Errorf("tempmail: create inbox: %w: guerrilla: op failed", tempmail.ErrProvider), http.StatusBadGateway},
+		{"internal failure", errors.New("tempmail: store session: redis down"), http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeTempMailService{createErr: tc.err}
+			handler := tempMailHandler(t, svc)
+
+			body, _ := json.Marshal(CreateTempInboxRequest{Alias: "johnny"})
+			req := httptest.NewRequest(http.MethodPost, "/api/temp-mail/inbox", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			handler.CreateTempInbox(w, req)
+
+			assert.Equal(t, tc.want, w.Code, w.Body.String())
+			// Internal error text never reaches the client.
+			assert.NotContains(t, w.Body.String(), "redis down")
+			assert.NotContains(t, w.Body.String(), "guerrilla")
+		})
+	}
+}
+
+func TestTempMailEndpointsWithoutServiceAre503(t *testing.T) {
+	handler := tempMailHandler(t, nil)
+
+	calls := []struct {
+		name   string
+		method string
+		path   string
+		vars   map[string]string
+		invoke func(http.ResponseWriter, *http.Request)
+	}{
+		{"create", http.MethodPost, "/api/temp-mail/inbox", nil, func(w http.ResponseWriter, r *http.Request) { handler.CreateTempInbox(w, r) }},
+		{"list", http.MethodGet, "/api/temp-mail/inbox/inbox-1", map[string]string{"id": "inbox-1"}, func(w http.ResponseWriter, r *http.Request) { handler.GetTempInbox(w, r) }},
+		{"message", http.MethodGet, "/api/temp-mail/inbox/inbox-1/messages/101", map[string]string{"id": "inbox-1", "mailID": "101"}, func(w http.ResponseWriter, r *http.Request) { handler.GetTempMessage(w, r) }},
+		{"delete", http.MethodDelete, "/api/temp-mail/inbox/inbox-1", map[string]string{"id": "inbox-1"}, func(w http.ResponseWriter, r *http.Request) { handler.DeleteTempInbox(w, r) }},
+	}
+
+	for _, call := range calls {
+		t.Run(call.name, func(t *testing.T) {
+			req := httptest.NewRequest(call.method, call.path, nil)
+			if call.vars != nil {
+				req = mux.SetURLVars(req, call.vars)
+			}
+			w := httptest.NewRecorder()
+
+			call.invoke(w, req)
+
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestGetTempInboxReturnsMessagesWithoutBodies(t *testing.T) {
+	svc := &fakeTempMailService{inbox: sampleTempInbox()}
+	handler := tempMailHandler(t, svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/temp-mail/inbox/ab12cd34ef56ab78cd90ef12ab34cd56", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "ab12cd34ef56ab78cd90ef12ab34cd56"})
+	w := httptest.NewRecorder()
+
+	handler.GetTempInbox(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "ab12cd34ef56ab78cd90ef12ab34cd56", svc.gotInboxID)
+
+	var dto TempMailInbox
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dto))
+	assert.Equal(t, "johnny@guerrillamail.com", dto.Email)
+	require.Len(t, dto.Messages, 1)
+	assert.Equal(t, TempMailMessage{ID: "101", From: "sender@example.com", Subject: "Weekly digest", Excerpt: "top story", ReceivedAt: dto.Messages[0].ReceivedAt}, dto.Messages[0])
+	assertNoSID(t, w.Body.String())
+}
+
+func TestGetTempInboxErrorMapping(t *testing.T) {
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{tempmail.ErrInboxNotFound, http.StatusNotFound},
+		{fmt.Errorf("tempmail: list messages: %w: boom", tempmail.ErrProvider), http.StatusBadGateway},
+		{errors.New("tempmail: read session: redis down"), http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		svc := &fakeTempMailService{msgsErr: tc.err}
+		handler := tempMailHandler(t, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/temp-mail/inbox/missing", nil)
+		req = mux.SetURLVars(req, map[string]string{"id": "missing"})
+		w := httptest.NewRecorder()
+
+		handler.GetTempInbox(w, req)
+
+		assert.Equal(t, tc.want, w.Code, w.Body.String())
+	}
+}
+
+func TestGetTempMessageReturnsBody(t *testing.T) {
+	received := time.Date(2026, time.November, 11, 11, 0, 0, 0, time.UTC)
+	svc := &fakeTempMailService{message: &tempmail.Message{
+		ID: "101", From: "sender@example.com", Subject: "Weekly digest",
+		Body: "plain text body", ReceivedAt: received,
+	}}
+	handler := tempMailHandler(t, svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/temp-mail/inbox/inbox-1/messages/101", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "inbox-1", "mailID": "101"})
+	w := httptest.NewRecorder()
+
+	handler.GetTempMessage(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "inbox-1", svc.gotMsgID)
+	assert.Equal(t, "101", svc.gotMailID)
+
+	var dto TempMailMessageBody
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dto))
+	assert.Equal(t, "101", dto.ID)
+	assert.Equal(t, "plain text body", dto.Body)
+	assert.Equal(t, received.UTC().Format(time.RFC3339), dto.ReceivedAt.UTC().Format(time.RFC3339))
+	assertNoSID(t, w.Body.String())
+}
+
+func TestGetTempMessageErrorMapping(t *testing.T) {
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{tempmail.ErrInboxNotFound, http.StatusNotFound},
+		{fmt.Errorf("tempmail: fetch message: %w: boom", tempmail.ErrProvider), http.StatusBadGateway},
+		{errors.New("redis down"), http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		svc := &fakeTempMailService{messageErr: tc.err}
+		handler := tempMailHandler(t, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/temp-mail/inbox/inbox-1/messages/101", nil)
+		req = mux.SetURLVars(req, map[string]string{"id": "inbox-1", "mailID": "101"})
+		w := httptest.NewRecorder()
+
+		handler.GetTempMessage(w, req)
+
+		assert.Equal(t, tc.want, w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteTempInboxRemovesSession(t *testing.T) {
+	svc := &fakeTempMailService{}
+	handler := tempMailHandler(t, svc)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/temp-mail/inbox/inbox-1", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "inbox-1"})
+	w := httptest.NewRecorder()
+
+	handler.DeleteTempInbox(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "inbox-1", svc.gotDelID)
+	assert.Contains(t, w.Body.String(), "deleted")
+	assertNoSID(t, w.Body.String())
+}
+
+func TestDeleteTempInboxUnknownIs404(t *testing.T) {
+	svc := &fakeTempMailService{deleteErr: tempmail.ErrInboxNotFound}
+	handler := tempMailHandler(t, svc)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/temp-mail/inbox/missing", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "missing"})
+	w := httptest.NewRecorder()
+
+	handler.DeleteTempInbox(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }

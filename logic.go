@@ -18,8 +18,10 @@ import (
 	"twitch-smm-bot/internal/audio"
 	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/cache"
+	"twitch-smm-bot/internal/guerrilla"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/tempmail"
 	"twitch-smm-bot/internal/tokencrypt"
 	"twitch-smm-bot/internal/twitch"
 	"twitch-smm-bot/internal/twitchtoken"
@@ -2041,6 +2043,14 @@ func main() {
 	tokenService := bottoken.New(store, tokenCipher, twitchtoken.NewClient(twitchtoken.DefaultBaseURL, nil))
 	manager.SetTokenService(tokenService)
 	apiServer.SetTokenService(tokenService)
+
+	// Temporary inboxes keep the Guerrilla session server-side in Redis; with
+	// no cache client there is nowhere to keep it, so the endpoints answer 503.
+	if cacheClient != nil {
+		apiServer.SetTempMailService(tempmail.New(cacheClient, guerrilla.NewClient("", nil)))
+	} else {
+		slog.Warn("Redis unavailable, temporary mail endpoints are disabled")
+	}
 
 	go func() {
 		if err := apiServer.Start(); err != nil {

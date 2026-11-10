@@ -80,6 +80,11 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	api.HandleFunc("/settings/test-audio", handler.TestAudio).Methods("GET")
 	api.HandleFunc("/settings/test-llm", handler.TestLLM).Methods("POST")
 
+	api.HandleFunc("/temp-mail/inbox", handler.CreateTempInbox).Methods("POST")
+	api.HandleFunc("/temp-mail/inbox/{id}", handler.GetTempInbox).Methods("GET")
+	api.HandleFunc("/temp-mail/inbox/{id}/messages/{mailID}", handler.GetTempMessage).Methods("GET")
+	api.HandleFunc("/temp-mail/inbox/{id}", handler.DeleteTempInbox).Methods("DELETE")
+
 	c := cors.New(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -121,4 +126,10 @@ func (s *Server) Hub() *Hub {
 // SetTokenService wires the token import service into the API handlers.
 func (s *Server) SetTokenService(svc TokenService) {
 	s.handler.SetTokenService(svc)
+}
+
+// SetTempMailService wires the Guerrilla temporary mail service into the API
+// handlers.
+func (s *Server) SetTempMailService(svc TempMailService) {
+	s.handler.SetTempMailService(svc)
 }

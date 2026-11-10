@@ -136,3 +136,40 @@ type SettingsLogPayload struct {
 	Changes   map[string]interface{} `json:"changes,omitempty"`
 	Timestamp time.Time              `json:"timestamp"`
 }
+
+// --- Temporary mail ---------------------------------------------------------
+
+// CreateTempInboxRequest is the optional body of POST /api/temp-mail/inbox.
+// An empty alias asks the provider for its own default address.
+type CreateTempInboxRequest struct {
+	Alias string `json:"alias,omitempty"`
+}
+
+// TempMailInbox is the public view of a temporary inbox. There is no sid
+// field by design: the provider session token never leaves the backend.
+type TempMailInbox struct {
+	ID        string            `json:"id"`
+	Email     string            `json:"email"`
+	ExpiresAt time.Time         `json:"expires_at"`
+	Messages  []TempMailMessage `json:"messages,omitempty"`
+}
+
+// TempMailMessage is one inbox entry without its body; bodies are fetched per
+// message so a list response stays small.
+type TempMailMessage struct {
+	ID         string    `json:"id"`
+	From       string    `json:"from"`
+	Subject    string    `json:"subject"`
+	Excerpt    string    `json:"excerpt"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
+// TempMailMessageBody is a single message with its body converted to plain
+// text by the backend.
+type TempMailMessageBody struct {
+	ID         string    `json:"id"`
+	From       string    `json:"from"`
+	Subject    string    `json:"subject"`
+	Body       string    `json:"body"`
+	ReceivedAt time.Time `json:"received_at"`
+}

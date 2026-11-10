@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/tempmail"
 	"twitch-smm-bot/internal/twitch"
 )
 
@@ -66,9 +68,24 @@ type TokenService interface {
 	RefreshNow(ctx context.Context, botID string) (*bottoken.Status, error)
 }
 
+// TempMailService provisions short-lived anonymous inboxes; *tempmail.Service
+// is the production implementation. The Guerrilla session token (sid) lives
+// only inside the service: none of the returned types or errors carries it,
+// and handlers must keep it out of responses and error strings.
+type TempMailService interface {
+	Create(ctx context.Context, alias string) (*tempmail.Inbox, error)
+	Messages(ctx context.Context, id string) (*tempmail.Inbox, error)
+	Message(ctx context.Context, id, mailID string) (*tempmail.Message, error)
+	Delete(ctx context.Context, id string) error
+}
+
 // tokenRequestTimeout bounds the provider round-trip of a token endpoint. The
 // twitchtoken client has its own per-request timeout; this is the outer cap.
 const tokenRequestTimeout = 30 * time.Second
+
+// tempMailRequestTimeout bounds one temp-mail provider round-trip. The
+// guerrilla client caps its own requests at 10 s; this is the outer cap.
+const tempMailRequestTimeout = 15 * time.Second
 
 type BotInfo struct {
 	Config  storage.BotConfig
@@ -90,6 +107,7 @@ type Handler struct {
 	cacheClient     CacheClient
 	streamMonitor   StreamStatusProvider
 	tokenService    TokenService
+	tempMailService TempMailService
 	envLookup       func(string) string
 }
 
@@ -97,6 +115,12 @@ type Handler struct {
 // endpoints answer 503; every other route is unaffected.
 func (h *Handler) SetTokenService(svc TokenService) {
 	h.tokenService = svc
+}
+
+// SetTempMailService wires the Guerrilla temporary mail service. Without it
+// the temp-mail endpoints answer 503; every other route is unaffected.
+func (h *Handler) SetTempMailService(svc TempMailService) {
+	h.tempMailService = svc
 }
 
 type CacheClient interface {
@@ -1315,4 +1339,144 @@ func (h *Handler) TestLLM(w http.ResponseWriter, r *http.Request) {
 		"message": message,
 		"status":  "ok",
 	})
+}
+
+// --- Temporary mail endpoints ---------------------------------------------
+
+// CreateTempInbox claims a short-lived anonymous inbox. The body is optional:
+// an absent one means "no alias, provider default". The response is the
+// public inbox only; the provider session token never leaves the service.
+func (h *Handler) CreateTempInbox(w http.ResponseWriter, r *http.Request) {
+	if h.tempMailService == nil {
+		respondError(w, "temp mail is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req CreateTempInboxRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		respondError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tempMailRequestTimeout)
+	defer cancel()
+
+	inbox, err := h.tempMailService.Create(ctx, strings.TrimSpace(req.Alias))
+	if err != nil {
+		respondTempMailError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, toTempMailInboxDTO(inbox)); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// GetTempInbox lists the current mail of a stored inbox without bodies.
+func (h *Handler) GetTempInbox(w http.ResponseWriter, r *http.Request) {
+	inboxID := mux.Vars(r)["id"]
+	if h.tempMailService == nil {
+		respondError(w, "temp mail is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tempMailRequestTimeout)
+	defer cancel()
+
+	inbox, err := h.tempMailService.Messages(ctx, inboxID)
+	if err != nil {
+		respondTempMailError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, toTempMailInboxDTO(inbox)); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// GetTempMessage returns one message with its HTML body converted to plain
+// text server-side.
+func (h *Handler) GetTempMessage(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	inboxID, mailID := vars["id"], vars["mailID"]
+	if h.tempMailService == nil {
+		respondError(w, "temp mail is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tempMailRequestTimeout)
+	defer cancel()
+
+	msg, err := h.tempMailService.Message(ctx, inboxID, mailID)
+	if err != nil {
+		respondTempMailError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, toTempMailMessageBodyDTO(msg)); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// DeleteTempInbox drops the stored session; the inbox id stops working
+// immediately.
+func (h *Handler) DeleteTempInbox(w http.ResponseWriter, r *http.Request) {
+	inboxID := mux.Vars(r)["id"]
+	if h.tempMailService == nil {
+		respondError(w, "temp mail is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tempMailRequestTimeout)
+	defer cancel()
+
+	if err := h.tempMailService.Delete(ctx, inboxID); err != nil {
+		respondTempMailError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, map[string]string{"status": "deleted"}); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// respondTempMailError maps tempmail sentinels to HTTP statuses. The messages
+// are static: provider error text never reaches the client.
+func respondTempMailError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, tempmail.ErrInboxNotFound):
+		respondError(w, "inbox not found", http.StatusNotFound)
+	case errors.Is(err, tempmail.ErrInvalidAlias):
+		respondError(w, "invalid alias", http.StatusBadRequest)
+	case errors.Is(err, tempmail.ErrProvider):
+		respondError(w, "temp mail provider failed", http.StatusBadGateway)
+	default:
+		respondError(w, "operation failed", http.StatusInternalServerError)
+	}
+}
+
+// toTempMailInboxDTO maps a service inbox to its API shape. Bodies are
+// deliberately not mapped here; the list never carries them.
+func toTempMailInboxDTO(inbox *tempmail.Inbox) TempMailInbox {
+	out := TempMailInbox{ID: inbox.ID, Email: inbox.Email, ExpiresAt: inbox.ExpiresAt}
+	for _, m := range inbox.Messages {
+		out.Messages = append(out.Messages, TempMailMessage{
+			ID:         m.ID,
+			From:       m.From,
+			Subject:    m.Subject,
+			Excerpt:    m.Excerpt,
+			ReceivedAt: m.ReceivedAt,
+		})
+	}
+	return out
+}
+
+func toTempMailMessageBodyDTO(msg *tempmail.Message) TempMailMessageBody {
+	return TempMailMessageBody{
+		ID:         msg.ID,
+		From:       msg.From,
+		Subject:    msg.Subject,
+		Body:       msg.Body,
+		ReceivedAt: msg.ReceivedAt,
+	}
 }
