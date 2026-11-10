@@ -18,6 +18,11 @@ export interface Bot {
   presence_state: BotPresenceState;
   session_ends_at?: string;
   cooldown_until?: string;
+  /** Twitch token metadata from GET /api/bots. The token itself is never exposed. */
+  token_valid: boolean;
+  token_has_refresh: boolean;
+  token_expires_at?: string;
+  token_scopes?: string[];
 }
 
 export interface CreateBotRequest {
@@ -106,6 +111,19 @@ export interface BotLogEntry {
   created_at: string;
 }
 
+/**
+ * Result of the bot token endpoints: metadata about a stored Twitch token.
+ * Never contains the token itself.
+ */
+export interface TokenStatus {
+  valid: boolean;
+  login: string;
+  expires_at?: string;
+  has_refresh: boolean;
+  client_id?: string;
+  scopes?: string[];
+}
+
 export interface Chatter {
   login: string;
   last_message_at: string;
@@ -179,6 +197,27 @@ export function isResponseError(error: unknown): boolean {
   return axios.isAxiosError(error) && Boolean(error.response);
 }
 
+// Human-readable Russian message for the bot token endpoints' distinct
+// failure modes. Falls back to the generic getErrorMessage otherwise.
+// Response bodies are never read: they may contain secrets.
+export function getTokenErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error) && error.response) {
+    switch (error.response.status) {
+      case 400:
+        return 'Twitch не принял этот токен или токен уже не действует';
+      case 409:
+        return 'Токен принадлежит другому аккаунту Twitch — логин не совпадает с ботом';
+      case 502:
+        return 'Twitch недоступен — попробуйте позже';
+      case 503:
+        return 'Сервер не настроен для хранения токенов (нет ключа шифрования)';
+      default:
+        break;
+    }
+  }
+  return getErrorMessage(error);
+}
+
 export const api = {
   // Bots
   getBots: () => client.get<Bot[]>('/api/bots'),
@@ -192,6 +231,16 @@ export const api = {
   stopBot: (id: string) => client.post(`/api/bots/${id}/stop`),
   startAll: () => client.post('/api/bots/start-all'),
   stopAll: () => client.post('/api/bots/stop-all'),
+
+  // Bot Twitch tokens. These calls are the ONLY place a token value is sent:
+  // they never ride along with create/update bot payloads.
+  importBotToken: (id: string, accessToken: string, refreshToken?: string) =>
+    client.post<TokenStatus>(`/api/bots/${id}/token`, {
+      access_token: accessToken,
+      ...(refreshToken ? { refresh_token: refreshToken } : {}),
+    }),
+  getBotToken: (id: string) => client.get<TokenStatus>(`/api/bots/${id}/token`),
+  refreshBotToken: (id: string) => client.post<TokenStatus>(`/api/bots/${id}/token/refresh`),
 
   // Stats
   getStats: () => client.get<Stats>('/api/stats'),

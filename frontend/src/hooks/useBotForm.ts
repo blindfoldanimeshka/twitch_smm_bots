@@ -1,5 +1,11 @@
 import { useState, useCallback, useEffect } from 'react'
 
+/**
+ * Bot settings form fields, mirrored into the create/update payloads.
+ * Deliberately excludes Twitch tokens: token values are only ever sent via
+ * api.importBotToken/refreshBotToken (see components/BotModal.tsx) and must
+ * never appear in the regular bot update.
+ */
 export interface BotFormData {
   id: string
   twitch_login: string

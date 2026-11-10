@@ -219,6 +219,7 @@ export default function Bots() {
         isSubmitting={submitPending}
         error={modalError ? getErrorMessage(modalError) : null}
         onSubmit={handleSubmit}
+        onTokenChanged={invalidateAfterAction}
       />
 
       <Modal

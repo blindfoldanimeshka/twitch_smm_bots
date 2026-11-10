@@ -38,6 +38,35 @@ function presenceBadge(bot: Bot): { tone: BadgeTone; label: string } {
   }
 }
 
+const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
+
+interface TokenBadge {
+  tone: BadgeTone
+  label: string
+  /** Hover text with the expiry moment, when there is a token on record. */
+  title: string
+}
+
+function tokenBadge(bot: Bot): TokenBadge {
+  const expiresAt = bot.token_expires_at ? new Date(bot.token_expires_at) : null
+  if (expiresAt === null || Number.isNaN(expiresAt.getTime())) {
+    return { tone: 'neutral', label: 'нет токена', title: 'Токен Twitch не импортирован' }
+  }
+  const when = expiresAt.toLocaleString('ru-RU')
+  const msLeft = expiresAt.getTime() - Date.now()
+  if (msLeft <= 0) {
+    return { tone: 'error', label: 'истёк', title: `Токен истёк ${when}` }
+  }
+  if (!bot.token_valid) {
+    // Twitch already rejects it even though the stored expiry has not passed.
+    return { tone: 'error', label: 'истёк', title: `Twitch отклоняет токен (формально до ${when})` }
+  }
+  if (msLeft <= EXPIRING_SOON_MS) {
+    return { tone: 'warning', label: 'истекает', title: `Токен истекает ${when}` }
+  }
+  return { tone: 'success', label: 'токен: OK', title: `Токен истекает ${when}` }
+}
+
 /** The bots table: login, name, personality, presence, delays, limit, actions. */
 export function BotsTable({
   bots,
@@ -69,6 +98,7 @@ export function BotsTable({
             <th>Имя</th>
             <th>Личность</th>
             <th>Присутствие</th>
+            <th>Токен</th>
             <th>Задержки</th>
             <th>Лимит</th>
             <th style={{ textAlign: 'right' }}>Действия</th>
@@ -77,6 +107,7 @@ export function BotsTable({
         <tbody>
           {bots.map((bot) => {
             const badge = presenceBadge(bot)
+            const token = tokenBadge(bot)
             const running = isRunning(bot)
             return (
               <tr key={bot.id}>
@@ -85,6 +116,11 @@ export function BotsTable({
                 <td>{bot.personality}</td>
                 <td>
                   <Badge tone={badge.tone}>{badge.label}</Badge>
+                </td>
+                <td>
+                  <span title={token.title}>
+                    <Badge tone={token.tone}>{token.label}</Badge>
+                  </span>
                 </td>
                 <td>
                   {bot.min_delay_sec}–{bot.max_delay_sec} сек
