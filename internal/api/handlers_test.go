@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 	"twitch-smm-bot/internal/twitch"
@@ -1422,4 +1426,303 @@ func TestCalculateSettingsChangesIncludesTwitchFields(t *testing.T) {
 	unchanged := handler.calculateSettingsChanges(old, old)
 	assert.NotContains(t, unchanged, "twitch_client_id")
 	assert.NotContains(t, unchanged, "twitch_client_secret")
+}
+
+// --- Token endpoints -------------------------------------------------------
+
+// fakeTokenService is a programmable TokenService stub. It records the exact
+// token strings the handler passed so tests can prove the response never
+// echoes them.
+type fakeTokenService struct {
+	importStatus *bottoken.Status
+	importErr    error
+	gotImport    importCall
+
+	refreshStatus *bottoken.Status
+	refreshErr    error
+	gotRefreshID  string
+}
+
+type importCall struct {
+	botID, login, access, refresh string
+}
+
+func (f *fakeTokenService) Import(_ context.Context, botID, login, accessToken, refreshToken string) (*bottoken.Status, error) {
+	f.gotImport = importCall{botID: botID, login: login, access: accessToken, refresh: refreshToken}
+	return f.importStatus, f.importErr
+}
+
+func (f *fakeTokenService) RefreshNow(_ context.Context, botID string) (*bottoken.Status, error) {
+	f.gotRefreshID = botID
+	return f.refreshStatus, f.refreshErr
+}
+
+// tokenBotManager is a MockBotManager carrying one stored bot.
+func tokenBotManager(t *testing.T, info *BotInfo) *MockBotManager {
+	t.Helper()
+	mockManager := new(MockBotManager)
+	if info != nil {
+		mockManager.On("GetBot", info.Config.ID).Return(info, nil)
+	} else {
+		mockManager.On("GetBot", mock.Anything).Return(nil, errors.New("bot not found"))
+	}
+	return mockManager
+}
+
+func tokenHandler(t *testing.T, info *BotInfo, svc TokenService) *Handler {
+	t.Helper()
+	handler := NewHandler(tokenBotManager(t, info), new(MockStore), nil, nil, nil, nil)
+	if svc != nil {
+		handler.SetTokenService(svc)
+	}
+	return handler
+}
+
+func tokenBotInfo() *BotInfo {
+	return &BotInfo{Config: storage.BotConfig{ID: "bot-1", TwitchLogin: "cooluser", Password: "oauth:stored-access"}}
+}
+
+func TestImportTokenReturnsStatusAndNeverEchoesTokens(t *testing.T) {
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	svc := &fakeTokenService{importStatus: &bottoken.Status{
+		Valid: true, Login: "cooluser", ExpiresAt: &expires, HasRefresh: true,
+		ClientID: "cid", Scopes: []string{"chat:read", "chat:edit"},
+	}}
+	handler := tokenHandler(t, tokenBotInfo(), svc)
+
+	// The login is taken from the stored bot, never from the request.
+	body, _ := json.Marshal(ImportTokenRequest{AccessToken: "secret-access-abc", RefreshToken: "secret-refresh-xyz"})
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token", bytes.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.ImportBotToken(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, importCall{botID: "bot-1", login: "cooluser", access: "secret-access-abc", refresh: "secret-refresh-xyz"}, svc.gotImport)
+
+	var status bottoken.Status
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	assert.True(t, status.Valid)
+	assert.True(t, status.HasRefresh)
+	assert.Equal(t, "cooluser", status.Login)
+
+	// Tokens appear nowhere in the response, in any casing.
+	assert.NotContains(t, strings.ToLower(w.Body.String()), "secret-access-abc")
+	assert.NotContains(t, strings.ToLower(w.Body.String()), "secret-refresh-xyz")
+}
+
+func TestImportTokenErrorMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"login mismatch", fmt.Errorf("wrapped: %w", bottoken.ErrLoginMismatch), http.StatusConflict},
+		{"invalid token", fmt.Errorf("wrapped: %w", bottoken.ErrInvalidToken), http.StatusBadRequest},
+		{"no refresh token", fmt.Errorf("wrapped: %w", bottoken.ErrNoRefreshToken), http.StatusBadRequest},
+		{"token expired", fmt.Errorf("wrapped: %w", bottoken.ErrTokenExpired), http.StatusBadRequest},
+		{"encryption unavailable", fmt.Errorf("wrapped: %w", bottoken.ErrEncryptionUnavailable), http.StatusServiceUnavailable},
+		{"upstream failure", fmt.Errorf("wrapped: %w", bottoken.ErrUpstream), http.StatusBadGateway},
+		{"store failure", errors.New("set bot token: boom"), http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeTokenService{importErr: tc.err}
+			handler := tokenHandler(t, tokenBotInfo(), svc)
+
+			body, _ := json.Marshal(ImportTokenRequest{AccessToken: "tok-should-not-appear"})
+			req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token", bytes.NewReader(body))
+			req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+			w := httptest.NewRecorder()
+
+			handler.ImportBotToken(w, req)
+
+			assert.Equal(t, tc.want, w.Code, w.Body.String())
+			assert.NotContains(t, w.Body.String(), "tok-should-not-appear")
+		})
+	}
+}
+
+func TestImportTokenUnknownBotIs404(t *testing.T) {
+	svc := &fakeTokenService{}
+	handler := tokenHandler(t, nil, svc)
+
+	body, _ := json.Marshal(ImportTokenRequest{AccessToken: "abc"})
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/missing/token", bytes.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"id": "missing"})
+	w := httptest.NewRecorder()
+
+	handler.ImportBotToken(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, importCall{}, svc.gotImport, "the service must not be called for an unknown bot")
+}
+
+func TestImportTokenWithoutServiceIs503(t *testing.T) {
+	handler := tokenHandler(t, tokenBotInfo(), nil)
+
+	body, _ := json.Marshal(ImportTokenRequest{AccessToken: "abc"})
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token", bytes.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.ImportBotToken(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestImportTokenRejectsMalformedBody(t *testing.T) {
+	handler := tokenHandler(t, tokenBotInfo(), &fakeTokenService{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token", strings.NewReader("{not json"))
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.ImportBotToken(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRefreshTokenWithoutStoredRefreshIs400(t *testing.T) {
+	svc := &fakeTokenService{refreshErr: fmt.Errorf("bot bot-1: %w", bottoken.ErrNoRefreshToken)}
+	handler := tokenHandler(t, tokenBotInfo(), svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token/refresh", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.RefreshBotToken(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Equal(t, "bot-1", svc.gotRefreshID)
+}
+
+func TestRefreshTokenReturnsStatus(t *testing.T) {
+	expires := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	svc := &fakeTokenService{refreshStatus: &bottoken.Status{Valid: true, Login: "cooluser", ExpiresAt: &expires, HasRefresh: true}}
+	handler := tokenHandler(t, tokenBotInfo(), svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/bot-1/token/refresh", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.RefreshBotToken(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var status bottoken.Status
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	assert.True(t, status.Valid)
+	assert.True(t, status.HasRefresh)
+}
+
+func TestRefreshTokenUnknownBotIs404(t *testing.T) {
+	svc := &fakeTokenService{}
+	handler := tokenHandler(t, nil, svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/bots/missing/token/refresh", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "missing"})
+	w := httptest.NewRecorder()
+
+	handler.RefreshBotToken(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "", svc.gotRefreshID, "the service must not be called for an unknown bot")
+}
+
+func TestGetBotTokenReportsStoredStatus(t *testing.T) {
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	info := tokenBotInfo()
+	info.Config.TokenExpiresAt = &expires
+	info.Config.TokenRefreshEnc = "gcm:ciphertext"
+	info.Config.TokenScopes = []string{"chat:read"}
+	info.Config.TokenClientID = "cid"
+	handler := tokenHandler(t, info, &fakeTokenService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bots/bot-1/token", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.GetBotToken(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var status bottoken.Status
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	assert.True(t, status.Valid)
+	assert.True(t, status.HasRefresh)
+	assert.Equal(t, []string{"chat:read"}, status.Scopes)
+
+	// Neither the stored access token nor the ciphertext leaks.
+	assert.NotContains(t, w.Body.String(), "stored-access")
+	assert.NotContains(t, w.Body.String(), "gcm:ciphertext")
+}
+
+func TestGetBotTokenUnknownBotIs404(t *testing.T) {
+	handler := tokenHandler(t, nil, &fakeTokenService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bots/missing/token", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "missing"})
+	w := httptest.NewRecorder()
+
+	handler.GetBotToken(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestBotDTOIncludesTokenStatus(t *testing.T) {
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	mockManager := new(MockBotManager)
+	mockManager.On("GetBot", "bot-1").Return(&BotInfo{
+		Config: storage.BotConfig{
+			ID:              "bot-1",
+			TwitchLogin:     "cooluser",
+			Password:        "oauth:stored-access",
+			Name:            "Test Bot",
+			Personality:     "нейтрал",
+			MinDelaySec:     5,
+			MaxDelaySec:     15,
+			RateLimitPerMin: 10,
+			TokenExpiresAt:  &expires,
+			TokenRefreshEnc: "gcm:ciphertext",
+			TokenScopes:     []string{"chat:read", "chat:edit"},
+		},
+		Running: true,
+	}, nil)
+	handler := NewHandler(mockManager, new(MockStore), nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bots/bot-1", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-1"})
+	w := httptest.NewRecorder()
+
+	handler.GetBot(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var dto BotDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dto))
+	require.NotNil(t, dto.TokenExpiresAt)
+	assert.True(t, expires.Equal(*dto.TokenExpiresAt))
+	assert.True(t, dto.TokenValid)
+	assert.True(t, dto.TokenHasRefresh)
+	assert.Equal(t, []string{"chat:read", "chat:edit"}, dto.TokenScopes)
+
+	// The stored password and the refresh ciphertext stay out of the DTO.
+	assert.NotContains(t, w.Body.String(), "stored-access")
+	assert.NotContains(t, w.Body.String(), "gcm:ciphertext")
+
+	// A bot without token metadata reports "no valid token" instead of lying.
+	plain := new(MockBotManager)
+	plain.On("GetBot", "bot-2").Return(&BotInfo{Config: storage.BotConfig{ID: "bot-2", TwitchLogin: "legacy"}}, nil)
+	legacyHandler := NewHandler(plain, new(MockStore), nil, nil, nil, nil)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/bots/bot-2", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "bot-2"})
+	w = httptest.NewRecorder()
+	legacyHandler.GetBot(w, req)
+
+	var legacy BotDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &legacy))
+	assert.False(t, legacy.TokenValid)
+	assert.False(t, legacy.TokenHasRefresh)
+	assert.Nil(t, legacy.TokenExpiresAt)
 }

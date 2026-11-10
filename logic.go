@@ -16,10 +16,13 @@ import (
 
 	"twitch-smm-bot/internal/api"
 	"twitch-smm-bot/internal/audio"
+	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/cache"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
+	"twitch-smm-bot/internal/tokencrypt"
 	"twitch-smm-bot/internal/twitch"
+	"twitch-smm-bot/internal/twitchtoken"
 )
 
 const (
@@ -47,6 +50,10 @@ const (
 	// presenceStopWait bounds how long pauseBot waits for the old loop to
 	// exit before giving up on scheduling the cooldown return.
 	presenceStopWait = 5 * time.Second
+
+	// tokenRefreshTimeout bounds the provider round-trip EnsureFresh performs
+	// inside startBot while the manager lock is held.
+	tokenRefreshTimeout = 20 * time.Second
 )
 
 // Presence session states for botRuntime.presenceState.
@@ -366,9 +373,36 @@ type botManager struct {
 	messageTimes   []time.Time // successful Twitch sends, for MessagesPerMin
 	newIRCClient   func(login, password, channel string) TwitchClient
 
+	// tokenService rotates imported Twitch tokens before a bot connects.
+	// nil (tests, installs without TOKEN_ENCRYPTION_KEY wiring) means "no
+	// automatic refresh": bots start with the stored password as-is.
+	tokenService *bottoken.Service
+
 	// Presence simulation.
 	presence      presenceConfig
 	presenceAfter func(time.Duration, func()) presenceTimer // default: defaultPresenceAfter
+}
+
+// SetTokenService wires the token import/refresh service into the manager.
+func (bm *botManager) SetTokenService(svc *bottoken.Service) {
+	bm.mu.Lock()
+	bm.tokenService = svc
+	bm.mu.Unlock()
+}
+
+// ensureFreshToken rotates br.cfg's token pair if it expires imminently. The
+// caller must hold bm.mu. It is a no-op when no token service is configured.
+func (bm *botManager) ensureFreshToken(ctx context.Context, br *botRuntime) (storage.BotConfig, error) {
+	if bm.tokenService == nil {
+		return br.cfg, nil
+	}
+
+	// The refresh runs while the manager lock is held (startBot), so bound it
+	// to keep one expiring token from stalling every other bot.
+	ctx, cancel := context.WithTimeout(ctx, tokenRefreshTimeout)
+	defer cancel()
+
+	return bm.tokenService.EnsureFresh(ctx, br.cfg)
 }
 
 func normalizeChannelName(raw string) string {
@@ -784,6 +818,15 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 		bm.mu.Unlock()
 		return fmt.Errorf("no twitch channel configured: set Settings -> channels in UI")
 	}
+
+	// Imported tokens expire: rotate an expiring pair (or refuse to start)
+	// before any password reaches the IRC client.
+	cfg, err := bm.ensureFreshToken(parent, br)
+	if err != nil {
+		bm.mu.Unlock()
+		return fmt.Errorf("bot %s: twitch token: %w", botID, err)
+	}
+	br.cfg = cfg
 
 	// Пересоздаем клиент на актуальный канал перед запуском.
 	br.client = bm.newIRCClient(br.cfg.TwitchLogin, br.cfg.Password, targetChannel)
@@ -1915,6 +1958,25 @@ func main() {
 
 	apiServer := api.NewServer(manager, store, llmClient, cacheClient, monitor, apiKey, apiPort, corsOrigins)
 	manager.setAPIHub(apiServer.Hub())
+
+	// Imported Twitch tokens: a refresh token is only ever persisted encrypted,
+	// so without a usable TOKEN_ENCRYPTION_KEY imports stay access-only and
+	// automatic rotation is disabled. The error text never carries key material.
+	var tokenCipher *tokencrypt.Cipher
+	if raw := env("TOKEN_ENCRYPTION_KEY", ""); raw != "" {
+		cipher, err := tokencrypt.NewCipher(raw)
+		if err != nil {
+			slog.Error("TOKEN_ENCRYPTION_KEY is not usable, token import will store access tokens only", "error", err)
+		} else {
+			tokenCipher = cipher
+		}
+	} else {
+		slog.Warn("TOKEN_ENCRYPTION_KEY is not set, refresh tokens cannot be stored or rotated")
+	}
+
+	tokenService := bottoken.New(store, tokenCipher, twitchtoken.NewClient(twitchtoken.DefaultBaseURL, nil))
+	manager.SetTokenService(tokenService)
+	apiServer.SetTokenService(tokenService)
 
 	go func() {
 		if err := apiServer.Start(); err != nil {

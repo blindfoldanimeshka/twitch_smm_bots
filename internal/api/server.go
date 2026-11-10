@@ -65,6 +65,9 @@ func NewServer(manager BotManager, store *storage.Store, llmClient *llm.Client, 
 	api.HandleFunc("/bots/{id}/start", handler.StartBot).Methods("POST")
 	api.HandleFunc("/bots/{id}/stop", handler.StopBot).Methods("POST")
 	api.HandleFunc("/bots/{id}/logs", handler.GetBotLogs).Methods("GET")
+	api.HandleFunc("/bots/{id}/token", handler.ImportBotToken).Methods("POST")
+	api.HandleFunc("/bots/{id}/token", handler.GetBotToken).Methods("GET")
+	api.HandleFunc("/bots/{id}/token/refresh", handler.RefreshBotToken).Methods("POST")
 	api.HandleFunc("/bots/start-all", handler.StartAll).Methods("POST")
 	api.HandleFunc("/bots/stop-all", handler.StopAll).Methods("POST")
 	api.HandleFunc("/stats", handler.GetStats).Methods("GET")
@@ -113,4 +116,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) Hub() *Hub {
 	return s.hub
+}
+
+// SetTokenService wires the token import service into the API handlers.
+func (s *Server) SetTokenService(svc TokenService) {
+	s.handler.SetTokenService(svc)
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"twitch-smm-bot/internal/bottoken"
 	"twitch-smm-bot/internal/llm"
 	"twitch-smm-bot/internal/storage"
 	"twitch-smm-bot/internal/twitch"
@@ -57,6 +58,18 @@ type StreamStatusProvider interface {
 	Snapshot(ctx context.Context, channel string, excludeLogins map[string]struct{}) twitch.StreamStatus
 }
 
+// TokenService imports and rotates Twitch bot tokens; *bottoken.Service is the
+// production implementation. Handlers must never pass token material into
+// responses or error strings — the returned bottoken.Status is metadata-only.
+type TokenService interface {
+	Import(ctx context.Context, botID, login, accessToken, refreshToken string) (*bottoken.Status, error)
+	RefreshNow(ctx context.Context, botID string) (*bottoken.Status, error)
+}
+
+// tokenRequestTimeout bounds the provider round-trip of a token endpoint. The
+// twitchtoken client has its own per-request timeout; this is the outer cap.
+const tokenRequestTimeout = 30 * time.Second
+
 type BotInfo struct {
 	Config  storage.BotConfig
 	Running bool
@@ -76,7 +89,14 @@ type Handler struct {
 	llmClient       *llm.Client
 	cacheClient     CacheClient
 	streamMonitor   StreamStatusProvider
+	tokenService    TokenService
 	envLookup       func(string) string
+}
+
+// SetTokenService wires the Twitch token import service. Without it the token
+// endpoints answer 503; every other route is unaffected.
+func (h *Handler) SetTokenService(svc TokenService) {
+	h.tokenService = svc
 }
 
 type CacheClient interface {
@@ -192,6 +212,20 @@ func botDTOFromInfo(bot BotInfo) BotDTO {
 		until := *bot.CooldownUntil
 		dto.CooldownUntil = &until
 	}
+
+	// Token metadata (never token material) via the one bottoken derivation.
+	// Pointers/slices are copied so the DTO never aliases manager memory.
+	tokenStatus := bottoken.StatusOf(bot.Config)
+	if tokenStatus.ExpiresAt != nil {
+		expiresAt := *tokenStatus.ExpiresAt
+		dto.TokenExpiresAt = &expiresAt
+	}
+	dto.TokenHasRefresh = tokenStatus.HasRefresh
+	dto.TokenValid = tokenStatus.Valid
+	if tokenStatus.Scopes != nil {
+		dto.TokenScopes = append([]string(nil), tokenStatus.Scopes...)
+	}
+
 	return dto
 }
 
@@ -456,6 +490,109 @@ func (h *Handler) StopBot(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+}
+
+// ImportBotToken validates the submitted token pair against the generator and
+// stores it for the bot. The response is the bottoken.Status only: raw tokens
+// go in, metadata comes out, nothing is echoed back.
+func (h *Handler) ImportBotToken(w http.ResponseWriter, r *http.Request) {
+	botID := mux.Vars(r)["id"]
+	if h.tokenService == nil {
+		respondError(w, "token import is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req ImportTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// The stored twitch login is the identity the token must belong to; the
+	// client never chooses it.
+	bot, err := h.manager.GetBot(botID)
+	if err != nil {
+		respondError(w, "bot not found", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tokenRequestTimeout)
+	defer cancel()
+
+	status, err := h.tokenService.Import(ctx, botID, bot.Config.TwitchLogin, req.AccessToken, req.RefreshToken)
+	if err != nil {
+		respondTokenError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, status); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// GetBotToken reports the stored token status (expiry, scopes, refresh
+// availability). It is a pure read of persisted metadata.
+func (h *Handler) GetBotToken(w http.ResponseWriter, r *http.Request) {
+	botID := mux.Vars(r)["id"]
+
+	bot, err := h.manager.GetBot(botID)
+	if err != nil {
+		respondError(w, "bot not found", http.StatusNotFound)
+		return
+	}
+
+	if err := respondJSON(w, bottoken.StatusOf(bot.Config)); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// RefreshBotToken rotates the stored token pair immediately.
+func (h *Handler) RefreshBotToken(w http.ResponseWriter, r *http.Request) {
+	botID := mux.Vars(r)["id"]
+	if h.tokenService == nil {
+		respondError(w, "token import is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if _, err := h.manager.GetBot(botID); err != nil {
+		respondError(w, "bot not found", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := withTimeout(r.Context(), tokenRequestTimeout)
+	defer cancel()
+
+	status, err := h.tokenService.RefreshNow(ctx, botID)
+	if err != nil {
+		respondTokenError(w, err)
+		return
+	}
+
+	if err := respondJSON(w, status); err != nil {
+		respondError(w, "failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// respondTokenError maps bottoken sentinels to HTTP statuses. The service error
+// text is never written out: it can mention the provider, but responses stay a
+// fixed vocabulary so nothing token-adjacent leaks.
+func respondTokenError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, bottoken.ErrLoginMismatch):
+		respondError(w, "token belongs to a different account", http.StatusConflict)
+	case errors.Is(err, bottoken.ErrInvalidToken):
+		respondError(w, "token is not valid", http.StatusBadRequest)
+	case errors.Is(err, bottoken.ErrNoRefreshToken):
+		respondError(w, "no refresh token stored for this bot", http.StatusBadRequest)
+	case errors.Is(err, bottoken.ErrTokenExpired):
+		respondError(w, "stored token can no longer be refreshed", http.StatusBadRequest)
+	case errors.Is(err, bottoken.ErrEncryptionUnavailable):
+		respondError(w, "token encryption is not configured", http.StatusServiceUnavailable)
+	case errors.Is(err, bottoken.ErrUpstream):
+		respondError(w, "token provider is unreachable", http.StatusBadGateway)
+	default:
+		respondError(w, "failed to save token", http.StatusInternalServerError)
+	}
 }
 
 func (h *Handler) StartAll(w http.ResponseWriter, r *http.Request) {

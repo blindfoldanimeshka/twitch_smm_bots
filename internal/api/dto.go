@@ -48,6 +48,13 @@ type UpdateBotRequest struct {
 	AutoRotateProxy *bool   `json:"auto_rotate_proxy,omitempty"`
 }
 
+// ImportTokenRequest carries the raw tokens for POST /api/bots/{id}/token.
+// The values are write-only: no response and no DTO ever echoes them back.
+type ImportTokenRequest struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 type ProxyDTO struct {
 	ID         string     `json:"id"`
 	Host       string     `json:"host"`
