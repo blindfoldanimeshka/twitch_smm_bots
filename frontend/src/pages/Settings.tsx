@@ -825,7 +825,8 @@ export default function Settings() {
           <Card title="Временная почта">
             <div style={{ display: 'grid', gap: 12 }}>
               <p style={HINT_STYLE}>
-                Отдельный self-hosted сервис для тестовых писем. Письма хранятся 48 часов.
+                Отдельный self-hosted сервис для тестовых писем. Письма хранятся
+                ограниченное время и удаляются автоматически.
               </p>
               <div style={{ justifySelf: 'start' }}>
                 <a
