@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,7 @@ const maxDrainBytes = 4 << 10
 
 // Validation is the result of validating an access token.
 type Validation struct {
+	Success   bool     `json:"success"`
 	Username  string   `json:"username"`
 	UserID    string   `json:"user_id"`
 	ClientID  string   `json:"client_id"`
@@ -39,6 +41,7 @@ type Validation struct {
 
 // Tokens is a refreshed access/refresh token pair.
 type Tokens struct {
+	Success      bool     `json:"success"`
 	AccessToken  string   `json:"access_token"`
 	RefreshToken string   `json:"refresh_token"`
 	ClientID     string   `json:"client_id"`
@@ -71,24 +74,32 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 }
 
 // Validate inspects an access token and returns the account, application and
-// granted scopes behind it.
+// granted scopes behind it. A response that is not marked successful, or that
+// carries no username, is an error: the caller must never store a zero value.
 func (c *Client) Validate(ctx context.Context, accessToken string) (*Validation, error) {
 	var out Validation
 	if err := c.post(ctx, "validate", "/api/v2/tokens/validate",
 		map[string]string{"access_token": accessToken}, &out); err != nil {
 		return nil, err
 	}
+	if !out.Success || out.Username == "" {
+		return nil, errors.New("twitchtoken: validate returned an empty or unsuccessful result")
+	}
 	return &out, nil
 }
 
 // Refresh exchanges a refresh token for a new access/refresh token pair. The
 // client_id and client_secret are omitted so the generator's shared Twitch
-// application is used.
+// application is used. An unsuccessful response or a partial token pair is an
+// error, so a working stored pair is never overwritten with empty strings.
 func (c *Client) Refresh(ctx context.Context, refreshToken string) (*Tokens, error) {
 	var out Tokens
 	if err := c.post(ctx, "refresh", "/api/v2/tokens/refresh",
 		map[string]string{"refresh_token": refreshToken}, &out); err != nil {
 		return nil, err
+	}
+	if !out.Success || out.AccessToken == "" || out.RefreshToken == "" {
+		return nil, errors.New("twitchtoken: refresh returned an empty or unsuccessful result")
 	}
 	return &out, nil
 }

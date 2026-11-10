@@ -118,6 +118,86 @@ func TestRefreshNullScopes(t *testing.T) {
 	assert.Nil(t, tok.Scopes)
 }
 
+// A 200 with success:false must not be treated as a valid result: storing the
+// zero value would wipe a working token pair.
+func TestValidateUnsuccessfulResponse(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":false,"message":"invalid request"}`)
+	})
+
+	v, err := c.Validate(context.Background(), testAccessToken)
+	require.Error(t, err)
+	assert.Nil(t, v, "no result may be stored")
+	assert.Contains(t, err.Error(), "unsuccessful")
+	assert.NotContains(t, err.Error(), testAccessToken)
+	assert.NotContains(t, err.Error(), "invalid request")
+}
+
+func TestRefreshUnsuccessfulResponse(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":false,"message":"invalid request"}`)
+	})
+
+	tok, err := c.Refresh(context.Background(), testRefreshToken)
+	require.Error(t, err)
+	assert.Nil(t, tok, "no result may be stored")
+	assert.Contains(t, err.Error(), "unsuccessful")
+	assert.NotContains(t, err.Error(), testRefreshToken)
+	assert.NotContains(t, err.Error(), "invalid request")
+}
+
+func TestValidateEmptyUsername(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"username":"","user_id":"123456789","client_id":"c","expires_in":3600,"scopes":[]}`)
+	})
+
+	v, err := c.Validate(context.Background(), testAccessToken)
+	require.Error(t, err)
+	assert.Nil(t, v)
+	assert.NotContains(t, err.Error(), testAccessToken)
+}
+
+func TestRefreshIncompleteTokenPair(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"empty access token", `{"success":true,"access_token":"","refresh_token":"` + testRefreshToken + `","client_id":"c","expires_in":3600,"scopes":[]}`},
+		{"empty refresh token", `{"success":true,"access_token":"` + testAccessToken + `","refresh_token":"","client_id":"c","expires_in":3600,"scopes":[]}`},
+		{"missing refresh token", `{"success":true,"access_token":"` + testAccessToken + `","client_id":"c","expires_in":3600,"scopes":[]}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			})
+
+			tok, err := c.Refresh(context.Background(), testRefreshToken)
+			require.Error(t, err)
+			assert.Nil(t, tok)
+			assert.NotContains(t, err.Error(), testRefreshToken)
+			assert.NotContains(t, err.Error(), testAccessToken)
+		})
+	}
+}
+
+func TestSuccessFieldDecoded(t *testing.T) {
+	vc, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"username":"exampleuser","user_id":"1","client_id":"c","expires_in":3600,"scopes":[]}`)
+	})
+	v, err := vc.Validate(context.Background(), testAccessToken)
+	require.NoError(t, err)
+	assert.True(t, v.Success)
+
+	tc, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"access_token":"a","refresh_token":"r","client_id":"c","expires_in":3600,"scopes":[]}`)
+	})
+	tok, err := tc.Refresh(context.Background(), testRefreshToken)
+	require.NoError(t, err)
+	assert.True(t, tok.Success)
+}
+
 func TestTrailingSlashBaseURL(t *testing.T) {
 	srv, got := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"success":true,"username":"u","user_id":"1","client_id":"c","expires_in":1,"scopes":[]}`)
