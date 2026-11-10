@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Mic, Plus, X } from 'lucide-react'
-import { api, getErrorMessage } from '../api/client'
-import type { Settings as SettingsType } from '../api/client'
-import { config } from '../config'
+import { Copy, Mail, Mic, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { api, getErrorMessage, getErrorStatus, getTempMailErrorMessage } from '../api/client'
+import type {
+  Settings as SettingsType,
+  TempMailInbox,
+  TempMailMessage,
+  TempMailMessageBody,
+} from '../api/client'
 import { PageHeader } from '../components/layout/PageHeader'
 import { AudioTestModal } from '../components/AudioTestModal'
 import { Alert } from '../components/ui/Alert'
 import { Badge, type BadgeTone } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
+import { EmptyState } from '../components/ui/EmptyState'
 import { Input } from '../components/ui/Input'
+import { Modal } from '../components/ui/Modal'
 import { Switch } from '../components/ui/switch'
 
 const HINT_STYLE = { fontSize: 12, color: 'var(--muted)' } as const
@@ -194,6 +200,342 @@ function SwitchField({
       </label>
       {hint && <span style={HINT_STYLE}>{hint}</span>}
     </div>
+  )
+}
+
+/* ── Temporary mail inbox ─────────────────────────────────────────── */
+
+const TEMP_INBOX_KEY = 'ttv-sm:temp-inbox'
+
+interface StoredTempInbox {
+  id: string
+  email: string
+  /** Мс эпоха: ящик живёт на стороне сервиса около часа. */
+  expiresAtMs: number
+}
+
+/**
+ * Читает сохранённый ящик и выбрасывает его вместе с копией в storage,
+ * если запись битая или её срок уже истёк — UI никогда не работает по
+ * мёртвому id.
+ */
+function loadStoredTempInbox(): StoredTempInbox | null {
+  try {
+    const raw = localStorage.getItem(TEMP_INBOX_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<StoredTempInbox>
+    if (
+      typeof parsed.id !== 'string' ||
+      typeof parsed.email !== 'string' ||
+      typeof parsed.expiresAtMs !== 'number'
+    ) {
+      throw new Error('stored inbox is malformed')
+    }
+    if (parsed.expiresAtMs <= Date.now()) throw new Error('stored inbox has expired')
+    return { id: parsed.id, email: parsed.email, expiresAtMs: parsed.expiresAtMs }
+  } catch {
+    try {
+      localStorage.removeItem(TEMP_INBOX_KEY)
+    } catch {
+      /* браузер отключил storage: чистить нечего */
+    }
+    return null
+  }
+}
+
+/** Запоминает созданный ящик; запасная дата жизни — задокументированный час. */
+function persistTempInbox(inbox: TempMailInbox): StoredTempInbox {
+  const parsed = new Date(inbox.expires_at).getTime()
+  const stored: StoredTempInbox = {
+    id: inbox.id,
+    email: inbox.email,
+    expiresAtMs: Number.isFinite(parsed) ? parsed : Date.now() + 60 * 60 * 1000,
+  }
+  try {
+    localStorage.setItem(TEMP_INBOX_KEY, JSON.stringify(stored))
+  } catch {
+    /* приватный режим: ящик работает хотя бы до конца визита */
+  }
+  return stored
+}
+
+function forgetTempInbox() {
+  try {
+    localStorage.removeItem(TEMP_INBOX_KEY)
+  } catch {
+    /* браузер отключил storage: состояние в памяти очищает вызывающий код */
+  }
+}
+
+/** Провайдерские метки времени → «дд.мм чч:мм» в локали пользователя. */
+function formatMailTime(iso: string): string {
+  const date = new Date(iso)
+  if (!Number.isFinite(date.getTime())) return '—'
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const MAIL_ROW_STYLE = {
+  display: 'grid',
+  gap: 2,
+  justifyItems: 'start',
+  maxWidth: '100%',
+  textAlign: 'left',
+  whiteSpace: 'normal',
+} as const
+
+/** Тело письма рендерится только текстом в <pre>: HTML провайдера сюда не попадает. */
+const MAIL_BODY_STYLE = {
+  margin: 0,
+  padding: 12,
+  background: 'var(--bg)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-md)',
+  font: '13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  maxHeight: '50vh',
+  overflowY: 'auto',
+} as const
+
+function TempMailCard() {
+  const [inbox, setInbox] = useState<StoredTempInbox | null>(loadStoredTempInbox)
+  const [alias, setAlias] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [openedMail, setOpenedMail] = useState<TempMailMessageBody | null>(null)
+
+  const {
+    data: inboxView,
+    isFetching: listFetching,
+    isError: listFailed,
+    error: listError,
+    refetch: refetchList,
+  } = useQuery({
+    queryKey: ['temp-inbox', inbox?.id],
+    queryFn: async () => (await api.getTempInbox(inbox!.id)).data,
+    enabled: inbox !== null,
+    // Провайдер — третья сторона: повтор только по кнопке пользователя.
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
+
+  // «Нет такого ящика» от провайдера означает, что сохранённый id мёртв:
+  // убираем его и показываем обычную форму создания с пояснением.
+  const listMissing = listFailed && getErrorStatus(listError) === 404
+  useEffect(() => {
+    if (!listMissing || !inbox) return
+    forgetTempInbox()
+    setInbox(null)
+    setNotice('Ящик истёк или был удалён на стороне сервиса. Создайте новый.')
+  }, [listMissing, inbox])
+
+  const createInbox = useMutation({
+    mutationFn: async (value: string) =>
+      (await api.createTempInbox(value.trim() || undefined)).data,
+    onSuccess: (created) => {
+      setActionError(null)
+      setNotice(null)
+      setAlias('')
+      setInbox(persistTempInbox(created))
+    },
+    onError: (error) => {
+      setNotice(null)
+      setActionError(getTempMailErrorMessage(error))
+    },
+  })
+
+  const deleteInbox = useMutation({
+    mutationFn: (id: string) => api.deleteTempInbox(id),
+    onSuccess: () => {
+      forgetTempInbox()
+      setActionError(null)
+      setNotice(null)
+      setInbox(null)
+    },
+    onError: (error) => setActionError(getTempMailErrorMessage(error)),
+  })
+
+  const copyEmail = async () => {
+    if (!inbox) return
+    try {
+      await navigator.clipboard.writeText(inbox.email)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setNotice('Не удалось скопировать адрес — выделите его и скопируйте вручную.')
+    }
+  }
+
+  const openMail = async (mailID: string) => {
+    if (!inbox) return
+    setActionError(null)
+    try {
+      const { data } = await api.getTempMessage(inbox.id, mailID)
+      setOpenedMail(data)
+    } catch (error) {
+      setActionError(getTempMailErrorMessage(error))
+    }
+  }
+
+  // Список отдельен от самого ящика: «Писем нет» рендерится только после
+  // успешной загрузки, а ошибка — как Alert с кнопкой повтора.
+  const mailList: TempMailMessage[] = inboxView?.messages ?? []
+
+  const expiryLabel = inbox
+    ? new Date(inbox.expiresAtMs).toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null
+
+  return (
+    <Card title="Временная почта" subtitle="Одноразовый ящик для тестовых регистраций">
+      <div style={{ display: 'grid', gap: 12 }}>
+        {notice && <Alert variant="info">{notice}</Alert>}
+        {actionError && <Alert variant="error">{actionError}</Alert>}
+
+        {!inbox ? (
+          <>
+            <p style={HINT_STYLE}>
+              Ящик живёт около часа и только принимает письма — отправить отсюда нельзя.
+              Оставьте имя пустым, чтобы сервис выдал свой адрес.
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 240px' }}>
+                <Input
+                  label="Имя ящика (необязательно)"
+                  type="text"
+                  placeholder="johnny.test"
+                  value={alias}
+                  maxLength={64}
+                  onChange={(e) => setAlias(e.target.value)}
+                />
+              </div>
+              <div>
+                <Button loading={createInbox.isPending} onClick={() => createInbox.mutate(alias)}>
+                  Создать ящик
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span
+                  style={{
+                    padding: '6px 10px',
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-pill)',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                    fontSize: 13,
+                    userSelect: 'all',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  {inboxView?.email || inbox.email}
+                </span>
+                <Button variant="secondary" size="sm" onClick={copyEmail}>
+                  <Copy size={14} aria-hidden="true" />
+                  {copied ? 'Скопировано' : 'Копировать'}
+                </Button>
+              </div>
+              {expiryLabel && <span style={HINT_STYLE}>Действует до {expiryLabel}</span>}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={listFetching}
+                onClick={() => refetchList()}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                Обновить
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                loading={deleteInbox.isPending}
+                onClick={() => deleteInbox.mutate(inbox.id)}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                Удалить
+              </Button>
+            </div>
+
+            {listFailed ? (
+              <Alert variant="error" title="Не удалось загрузить письма">
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <span>{getTempMailErrorMessage(listError)}</span>
+                  <div style={{ justifySelf: 'start' }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={listFetching}
+                      onClick={() => refetchList()}
+                    >
+                      Повторить
+                    </Button>
+                  </div>
+                </div>
+              </Alert>
+            ) : !inboxView ? (
+              <p style={HINT_STYLE}>Загрузка писем…</p>
+            ) : mailList.length === 0 ? (
+              <EmptyState
+                title="Писем нет"
+                description="Письма появятся здесь, как только на адрес кто-нибудь напишет."
+                icon={Mail}
+              />
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {mailList.map((mail) => (
+                  <button
+                    key={mail.id}
+                    type="button"
+                    className="btn btn--secondary"
+                    style={MAIL_ROW_STYLE}
+                    onClick={() => openMail(mail.id)}
+                  >
+                    <span style={{ fontWeight: 600 }}>{mail.subject || 'Без темы'}</span>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      {mail.from} • {formatMailTime(mail.received_at)}
+                    </span>
+                    {mail.excerpt && (
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>{mail.excerpt}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <Modal
+        open={openedMail !== null}
+        onClose={() => setOpenedMail(null)}
+        title={openedMail?.subject || 'Письмо'}
+        width={680}
+      >
+        {openedMail && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <p style={HINT_STYLE}>
+              От: {openedMail.from} • {formatMailTime(openedMail.received_at)}
+            </p>
+            <pre style={MAIL_BODY_STYLE}>{openedMail.body || 'Тело письма пустое.'}</pre>
+          </div>
+        )}
+      </Modal>
+    </Card>
   )
 }
 
@@ -820,28 +1162,8 @@ export default function Settings() {
         </Card>
 
         {/* ── Temporary mail ───────────────────────────────────────── */}
-        {/* Hidden entirely when the build has no mail service URL configured. */}
-        {config.tempMailUrl && (
-          <Card title="Временная почта">
-            <div style={{ display: 'grid', gap: 12 }}>
-              <p style={HINT_STYLE}>
-                Отдельный self-hosted сервис для тестовых писем. Письма хранятся
-                ограниченное время и удаляются автоматически.
-              </p>
-              <div style={{ justifySelf: 'start' }}>
-                <a
-                  className="btn btn--secondary btn--sm"
-                  href={config.tempMailUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ textDecoration: 'none' }}
-                >
-                  Открыть почтовую
-                </a>
-              </div>
-            </div>
-          </Card>
-        )}
+        {/* In-app Guerrilla inbox: the external TempFastMail link is gone. */}
+        <TempMailCard />
 
         {/* ── Save ─────────────────────────────────────────────────── */}
         <div style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>

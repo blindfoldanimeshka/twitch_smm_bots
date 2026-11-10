@@ -155,6 +155,38 @@ export interface StreamStatus {
   error?: string;
 }
 
+/**
+ * Temporary mail (Guerrilla proxy on the backend). One-list entry without
+ * its body: bodies are fetched per message via GET .../messages/{mailID}.
+ */
+export interface TempMailMessage {
+  id: string;
+  from: string;
+  subject: string;
+  excerpt: string;
+  received_at: string;
+}
+
+/**
+ * A temporary inbox. `messages` is omitted by the backend when the list is
+ * empty — treat a missing array as zero messages, never as "not loaded".
+ */
+export interface TempMailInbox {
+  id: string;
+  email: string;
+  expires_at: string;
+  messages?: TempMailMessage[];
+}
+
+/** A single message with its body already converted to plain text. */
+export interface TempMailMessageBody {
+  id: string;
+  from: string;
+  subject: string;
+  body: string;
+  received_at: string;
+}
+
 const client = axios.create({
   baseURL: config.apiUrl,
   headers: {
@@ -218,6 +250,34 @@ export function getTokenErrorMessage(error: unknown): string {
   return getErrorMessage(error);
 }
 
+// Human-readable Russian message for the temporary mail endpoints' distinct
+// failure modes (invalid alias, expired inbox, provider outage). Falls back
+// to the generic getErrorMessage otherwise.
+// Response bodies are never read: they may contain provider data.
+export function getTempMailErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error) && error.response) {
+    switch (error.response.status) {
+      case 400:
+        return 'Почтовый сервис не принял имя ящика — от 5 до 64 символов: латиница, цифры, точка, дефис и подчёркивание';
+      case 404:
+        return 'Ящик не найден — он истёк (живёт около часа) или был удалён';
+      case 502:
+        return 'Почтовый сервис не отвечает — попробуйте позже';
+      case 503:
+        return 'Временная почта недоступна — сервис не настроен на сервере';
+      default:
+        break;
+    }
+  }
+  return getErrorMessage(error);
+}
+
+// HTTP status of a server response error, or null for network-level failures
+// and non-HTTP errors. Lets callers react to 404 without importing axios.
+export function getErrorStatus(error: unknown): number | null {
+  return axios.isAxiosError(error) ? error.response?.status ?? null : null;
+}
+
 export const api = {
   // Bots
   getBots: () => client.get<Bot[]>('/api/bots'),
@@ -262,4 +322,13 @@ export const api = {
   // Bot Logs
   getBotLogs: (botId: string, limit: number = 100) =>
     client.get<BotLogEntry[]>(`/api/bots/${botId}/logs?limit=${limit}`),
+
+  // Temporary mail (Guerrilla inboxes). An absent/empty alias asks the
+  // provider for its own default address.
+  createTempInbox: (alias?: string) =>
+    client.post<TempMailInbox>('/api/temp-mail/inbox', alias ? { alias } : {}),
+  getTempInbox: (id: string) => client.get<TempMailInbox>(`/api/temp-mail/inbox/${id}`),
+  getTempMessage: (id: string, mailID: string) =>
+    client.get<TempMailMessageBody>(`/api/temp-mail/inbox/${id}/messages/${mailID}`),
+  deleteTempInbox: (id: string) => client.delete(`/api/temp-mail/inbox/${id}`),
 };
