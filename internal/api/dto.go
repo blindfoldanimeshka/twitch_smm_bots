@@ -19,6 +19,12 @@ type BotDTO struct {
 	PresenceState string     `json:"presence_state"`
 	SessionEndsAt *time.Time `json:"session_ends_at,omitempty"`
 	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
+
+	// Imported Twitch token metadata (filled by the token-import flow).
+	TokenExpiresAt  *time.Time `json:"token_expires_at"`
+	TokenHasRefresh bool       `json:"token_has_refresh"`
+	TokenScopes     []string   `json:"token_scopes"`
+	TokenValid      bool       `json:"token_valid"`
 }
 
 type CreateBotRequest struct {

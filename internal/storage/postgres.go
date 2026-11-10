@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS proxies (
 ALTER TABLE bots ADD COLUMN IF NOT EXISTS proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL;
 ALTER TABLE bots ADD COLUMN IF NOT EXISTS auto_rotate_proxy BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- Миграция: метаданные импортированного Twitch-токена (refresh хранится только в зашифрованном виде)
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS token_refresh_enc TEXT NOT NULL DEFAULT '';
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ;
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS token_client_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS token_scopes JSONB NOT NULL DEFAULT '[]';
+
 CREATE INDEX IF NOT EXISTS idx_proxies_enabled ON proxies(enabled);
 CREATE INDEX IF NOT EXISTS idx_bots_proxy_id ON bots(proxy_id);
 `
@@ -124,6 +130,13 @@ type BotConfig struct {
 	RateLimitPerMin int
 	Enabled         bool
 	CurrentChannel  string
+
+	// Imported Twitch token metadata. Password keeps the access token as "oauth:<token>";
+	// TokenRefreshEnc holds only the ciphertext produced by internal/tokencrypt.
+	TokenRefreshEnc string
+	TokenExpiresAt  *time.Time
+	TokenClientID   string
+	TokenScopes     []string
 }
 
 type Store struct {
@@ -167,7 +180,8 @@ func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
 	defer cancel()
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel
+		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel,
+		       token_refresh_enc, token_expires_at, token_client_id, token_scopes
 		FROM bots
 		ORDER BY id`)
 	if err != nil {
@@ -189,6 +203,10 @@ func (s *Store) ListBots(ctx context.Context) ([]BotConfig, error) {
 			&b.RateLimitPerMin,
 			&b.Enabled,
 			&b.CurrentChannel,
+			&b.TokenRefreshEnc,
+			&b.TokenExpiresAt,
+			&b.TokenClientID,
+			&b.TokenScopes,
 		); err != nil {
 			return nil, fmt.Errorf("scan bot: %w", err)
 		}
@@ -222,10 +240,12 @@ func (s *Store) GetBot(ctx context.Context, botID string) (*BotConfig, error) {
 
 	var b BotConfig
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel
+		SELECT id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel,
+		       token_refresh_enc, token_expires_at, token_client_id, token_scopes
 		FROM bots WHERE id = $1`, botID).Scan(
 		&b.ID, &b.TwitchLogin, &b.Password, &b.Name, &b.Personality,
 		&b.MinDelaySec, &b.MaxDelaySec, &b.RateLimitPerMin, &b.Enabled, &b.CurrentChannel,
+		&b.TokenRefreshEnc, &b.TokenExpiresAt, &b.TokenClientID, &b.TokenScopes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get bot: %w", err)
@@ -237,11 +257,19 @@ func (s *Store) CreateBot(ctx context.Context, cfg BotConfig) error {
 	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
 	defer cancel()
 
+	// JSONB NOT NULL: пустой срез вместо nil, чтобы не писать json-«null»
+	scopes := cfg.TokenScopes
+	if scopes == nil {
+		scopes = []string{}
+	}
+
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO bots (id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		INSERT INTO bots (id, twitch_login, password, name, personality, min_delay_sec, max_delay_sec, rate_limit_per_min, enabled, current_channel,
+		                  token_refresh_enc, token_expires_at, token_client_id, token_scopes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		cfg.ID, cfg.TwitchLogin, cfg.Password, cfg.Name, cfg.Personality,
 		cfg.MinDelaySec, cfg.MaxDelaySec, cfg.RateLimitPerMin, cfg.Enabled, cfg.CurrentChannel,
+		cfg.TokenRefreshEnc, cfg.TokenExpiresAt, cfg.TokenClientID, scopes,
 	)
 	if err != nil {
 		return fmt.Errorf("create bot: %w", err)
@@ -341,6 +369,33 @@ func (s *Store) UpdateBotChannel(ctx context.Context, botID string, channel stri
 	}
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("bot not found: %s", botID)
+	}
+	return nil
+}
+
+// SetBotToken writes an imported token pair for the bot. accessToken must already
+// be in the "oauth:<token>" form (semantics of bots.password do not change) and
+// refreshTokenEnc must be ciphertext — never pass a plaintext refresh token here.
+func (s *Store) SetBotToken(ctx context.Context, id, accessToken, refreshTokenEnc string, expiresAt time.Time, clientID string, scopes []string) error {
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
+	// JSONB NOT NULL: пустой срез вместо nil, чтобы не писать json-«null»
+	if scopes == nil {
+		scopes = []string{}
+	}
+
+	cmd, err := s.pool.Exec(ctx, `
+		UPDATE bots
+		SET password = $2, token_refresh_enc = $3, token_expires_at = $4, token_client_id = $5, token_scopes = $6, updated_at = NOW()
+		WHERE id = $1`,
+		id, accessToken, refreshTokenEnc, expiresAt, clientID, scopes,
+	)
+	if err != nil {
+		return fmt.Errorf("set bot token: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("bot not found: %s", id)
 	}
 	return nil
 }
