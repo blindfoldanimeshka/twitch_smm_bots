@@ -7,7 +7,8 @@ Twitch SMM он запускается **отдельным Docker-контей�
 `docker-compose.yml`).
 
 - Исходный код и образ: <https://github.com/kasteckis/TempFastMail> (лицензия **GPL-3.0**).
-- Мы запускаем **опубликованный образ `kasteckis/tempfastmail:latest` без изменений**
+- Мы запускаем **опубликованный образ `kasteckis/tempfastmail:1.0.0` без изменений**
+  (версия закреплена: миграции SQLite/stateful — `:latest` не используем)
   и не копируем его код в этот репозиторий.
 - Хранилище — SQLite в named-томе `tempfastmail_data` (`/app/sqlite` в контейнере).
 - Письма и ящики автоматически удаляются через `DELETE_EMAILS_AND_INBOXES_OLDER_THAN_HOURS`
@@ -51,6 +52,8 @@ ports:
   - `TEMPFASTMAIL_API_KEY` — общий секрет с Cloudflare Worker (в настройках Worker).
   - `TEMPFASTMAIL_URI` / `VITE_TEMP_MAIL_URL` — публичный URL сервиса
     (фронтенд обращается к API почты по `VITE_TEMP_MAIL_URL`).
+- `VITE_TEMP_MAIL_URL` прошивается в бандл фронтенда на этапе сборки: после изменения
+  требуется пересборка — `docker compose build frontend`.
   - `TEMPFASTMAIL_RETENTION_HOURS` — срок хранения писем.
   - `TEMPFASTMAIL_BIND` / `TEMPFASTMAIL_PORT` — привязка на хосте.
 

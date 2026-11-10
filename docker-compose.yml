@@ -168,15 +168,19 @@ services:
         condition: service_healthy
 
   # Self-hosted temporary mail (published GPL-3.0 image, run unmodified).
+  # Image is pinned (SQLite migrations are stateful; never float on :latest).
+  # No BASE_IMAGE_PREFIX: it mirrors Docker Hub *library* images, and this is a user image.
   # See docs/TEMPORARY_MAIL.md for Cloudflare Email Routing setup.
   tempfastmail:
-    image: ${BASE_IMAGE_PREFIX:-}kasteckis/tempfastmail:latest
+    image: kasteckis/tempfastmail:1.0.0
     container_name: twitch-smm-tempfastmail
     restart: unless-stopped
     environment:
       APP_ENV: prod
+      # Development default; set TEMPFASTMAIL_APP_SECRET in .env for real use
       APP_SECRET: ${TEMPFASTMAIL_APP_SECRET:-dev-only-change-me}
       DEFAULT_URI: ${TEMPFASTMAIL_URI:-http://localhost:8090}
+      # Development default; set TEMPFASTMAIL_API_KEY in .env for real use
       CREATE_RECEIVED_EMAIL_API_AUTHORIZATION_KEY: ${TEMPFASTMAIL_API_KEY:-dev-only-change-me}
       DELETE_EMAILS_AND_INBOXES_OLDER_THAN_HOURS: ${TEMPFASTMAIL_RETENTION_HOURS:-48}
     ports:
