@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Mic, Plus, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api/client'
 import type { Settings as SettingsType } from '../api/client'
+import { config } from '../config'
 import { PageHeader } from '../components/layout/PageHeader'
 import { AudioTestModal } from '../components/AudioTestModal'
 import { Alert } from '../components/ui/Alert'
@@ -817,6 +818,29 @@ export default function Settings() {
             </div>
           </div>
         </Card>
+
+        {/* ── Temporary mail ───────────────────────────────────────── */}
+        {/* Hidden entirely when the build has no mail service URL configured. */}
+        {config.tempMailUrl && (
+          <Card title="Временная почта">
+            <div style={{ display: 'grid', gap: 12 }}>
+              <p style={HINT_STYLE}>
+                Отдельный self-hosted сервис для тестовых писем. Письма хранятся 48 часов.
+              </p>
+              <div style={{ justifySelf: 'start' }}>
+                <a
+                  className="btn btn--secondary btn--sm"
+                  href={config.tempMailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: 'none' }}
+                >
+                  Открыть почтовую
+                </a>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {/* ── Save ─────────────────────────────────────────────────── */}
         <div style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>
