@@ -900,7 +900,12 @@ func (bm *botManager) startBot(parent context.Context, botID string, persist boo
 	br.stopping = false
 	br.stopped = make(chan struct{}, 1)
 
-	ctx, cancel := context.WithCancel(parent)
+	// The loop lives for the manager's lifetime, not the caller's: StartAll
+	// (and any request-scoped handler) cancels its context as soon as the
+	// response is written, which must not kill the bot loop while `running`
+	// stays true. br.cancel below is what stopBot/pauseBot use, so explicit
+	// stops still work.
+	ctx, cancel := context.WithCancel(bm.runtimeCtx)
 	br.ctx = ctx
 	br.cancel = cancel
 	br.running = true

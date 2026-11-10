@@ -140,6 +140,73 @@ func TestStartBotLaunchesLoopAndStopsPromptly(t *testing.T) {
 	assert.False(t, running, "bot should not be running after stopBot")
 }
 
+// TestStartBotLoopSurvivesCanceledParent pins the startBot context fix: the
+// loop context must be derived from the manager's lifetime context, never from
+// the caller's. A StartAll-style request-scoped caller cancels its context the
+// moment the handler returns; that must not silently kill the loop while
+// `running` stays true.
+func TestStartBotLoopSurvivesCanceledParent(t *testing.T) {
+	bm := newBotManager(nil, nil, nil, nil, context.Background(), "testchannel", 0, audio.Config{}, false, nil)
+
+	fake := newFakeTwitchClient()
+	bm.newIRCClient = func(login, password, channel string) TwitchClient {
+		return fake
+	}
+
+	bm.mu.Lock()
+	bm.bots["bot-1"] = &botRuntime{
+		cfg: storage.BotConfig{
+			ID:             "bot-1",
+			TwitchLogin:    "testlogin",
+			Enabled:        true,
+			MinDelaySec:    1,
+			MaxDelaySec:    1,
+			CurrentChannel: "testchannel",
+		},
+		client: fake,
+	}
+	bm.mu.Unlock()
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	// disableLLM: the loop must not need an LLM to keep running.
+	require.NoError(t, bm.startBot(parent, "bot-1", false, true))
+	// The request budget is spent as soon as the handler returns.
+	cancelParent()
+
+	// The loop survived the parent: it gets to poll its client (the first
+	// observable side effect after the initial delay).
+	select {
+	case <-fake.polled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runBotLoop died with the canceled parent: client was never polled")
+	}
+
+	// Give the loop a full monitor-delay cycle: a loop that noticed the parent
+	// cancellation after all would exit and close its stop channel here.
+	time.Sleep(1200 * time.Millisecond)
+
+	bm.mu.RLock()
+	br := bm.bots["bot-1"]
+	running, stopped := br.running, br.stopped
+	bm.mu.RUnlock()
+	assert.True(t, running, "the bot must still be running after the parent context was canceled")
+
+	select {
+	case <-stopped:
+		t.Fatal("runBotLoop closed its stop channel after the parent was canceled")
+	default:
+	}
+
+	start := time.Now()
+	require.NoError(t, bm.stopBot("bot-1", false))
+	assert.Less(t, time.Since(start), 2*time.Second, "explicit stopBot must still stop the loop promptly")
+
+	bm.mu.RLock()
+	running = bm.bots["bot-1"].running
+	bm.mu.RUnlock()
+	assert.False(t, running, "bot should not be running after stopBot")
+}
+
 // fakeTokenService stands in for *bottoken.Service: it records ctx.Err() at
 // every EnsureFresh call (so tests can see whether the refresh context was
 // alive) and returns a canned result. It holds no token material.
