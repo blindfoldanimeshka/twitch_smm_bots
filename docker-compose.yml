@@ -102,6 +102,7 @@ services:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8080}
         - VITE_WS_URL=${VITE_WS_URL:-ws://localhost:8080}
         - VITE_API_KEY=${API_KEY:-secret-api-key-12345}
+        - VITE_TEMP_MAIL_URL=${VITE_TEMP_MAIL_URL:-http://localhost:8090}
     container_name: twitch-smm-frontend
     restart: unless-stopped
     ports:
@@ -166,6 +167,24 @@ services:
       postgres:
         condition: service_healthy
 
+  # Self-hosted temporary mail (published GPL-3.0 image, run unmodified).
+  # See docs/TEMPORARY_MAIL.md for Cloudflare Email Routing setup.
+  tempfastmail:
+    image: ${BASE_IMAGE_PREFIX:-}kasteckis/tempfastmail:latest
+    container_name: twitch-smm-tempfastmail
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+      APP_SECRET: ${TEMPFASTMAIL_APP_SECRET:-dev-only-change-me}
+      DEFAULT_URI: ${TEMPFASTMAIL_URI:-http://localhost:8090}
+      CREATE_RECEIVED_EMAIL_API_AUTHORIZATION_KEY: ${TEMPFASTMAIL_API_KEY:-dev-only-change-me}
+      DELETE_EMAILS_AND_INBOXES_OLDER_THAN_HOURS: ${TEMPFASTMAIL_RETENTION_HOURS:-48}
+    ports:
+      - "${TEMPFASTMAIL_BIND:-127.0.0.1}:${TEMPFASTMAIL_PORT:-8090}:80"
+    volumes:
+      - tempfastmail_data:/app/sqlite
+
 volumes:
   postgres_data:
   redis_data:
+  tempfastmail_data:
